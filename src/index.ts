@@ -31,7 +31,7 @@ async function initializeBot() {
     
     // Handler function for messages
     const handleMessage = (msg: TelegramBot.Message) => {
-      console.log('Received message:', {
+      console.error('Received message:', {
         chatId: msg.chat.id.toString(),
         expectedChatId: validatedChatId,
         text: msg.text,
@@ -39,7 +39,7 @@ async function initializeBot() {
       });
     
       if (msg.chat.id.toString() !== validatedChatId || !msg.text) {
-        console.log('Message rejected: chat ID mismatch or no text');
+        console.error('Message rejected: chat ID mismatch or no text');
         return;
       }
       
@@ -58,19 +58,19 @@ async function initializeBot() {
         questionId = lastQuestionId;
       }
       
-      console.log('Question ID (from reply or last):', questionId);
-      console.log('Pending questions:', Array.from(pendingQuestions.keys()));
+      console.error('Question ID (from reply or last):', questionId);
+      console.error('Pending questions:', Array.from(pendingQuestions.keys()));
       
       if (questionId && pendingQuestions.has(questionId)) {
-        console.log('Found matching question with ID:', questionId);
-        console.log('Found matching question, resolving...');
+        console.error('Found matching question with ID:', questionId);
+        console.error('Found matching question, resolving...');
         const resolver = pendingQuestions.get(questionId)!;
         resolver(msg.text);
         pendingQuestions.delete(questionId);
         lastQuestionId = null;
-        console.log('Question resolved and removed from pending');
+        console.error('Question resolved and removed from pending');
       } else {
-        console.log('No matching question found for this response');
+        console.error('No matching question found for this response');
       }
     };
     
@@ -88,7 +88,7 @@ async function initializeBot() {
     
     // Test the connection
     const botInfo = await bot.getMe();
-    console.log('Bot initialized successfully:', botInfo.username);
+    console.error('Bot initialized successfully:', botInfo.username);
     
     // Clean up on process termination
     process.once('SIGINT', () => {
@@ -122,7 +122,7 @@ async function notifyUser(params: NotifyUserParams): Promise<void> {
   
   try {
     await bot.sendMessage(parseInt(validatedChatId), message);
-    console.log('Notification sent successfully');
+    console.error('Notification sent successfully');
   } catch (error: any) {
     console.error('Error in notifyUser:', error);
     throw new Error(`Failed to send notification: ${error.message}`);
@@ -138,7 +138,7 @@ async function askUser(params: AskUserParams): Promise<string> {
   const questionId = Math.random().toString(36).substring(7);
   lastQuestionId = questionId;
   
-  console.log('Asking question with ID:', questionId);
+  console.error('Asking question with ID:', questionId);
   
   try {
     await bot.sendMessage(parseInt(validatedChatId), `#${questionId}\n${question}`, {
@@ -147,15 +147,15 @@ async function askUser(params: AskUserParams): Promise<string> {
         selective: true
       }
     });
-    console.log('Question sent successfully');
+    console.error('Question sent successfully');
     
     const response = await new Promise<string>((resolve) => {
-      console.log('Adding question to pending map...');
+      console.error('Adding question to pending map...');
       pendingQuestions.set(questionId, resolve);
       // No timeout - will wait indefinitely for a response
     });
     
-    console.log('Received response:', response);
+    console.error('Received response:', response);
     return response;
   } catch (error: any) {
     console.error('Error in askUser:', error);
@@ -176,7 +176,7 @@ async function sendFile(params: { filePath: string }): Promise<void> {
       contentType: 'application/octet-stream',
       filename: path.basename(filePath)
     });
-    console.log('File sent successfully');
+    console.error('File sent successfully');
   } catch (error: any) {
     console.error('Error in sendFile:', error);
     throw new Error(`Failed to send file: ${error.message}`);
@@ -206,7 +206,7 @@ async function zipProject(params: { directory?: string } = {}): Promise<void> {
     });
 
     output.on('close', () => {
-      console.log(`Zipped ${archive.pointer()} total bytes`);
+      console.error(`Zipped ${archive.pointer()} total bytes`);
       resolve();
     });
 
@@ -297,8 +297,14 @@ class McpServer {
   }
 
   private async handleRequest(request: any) {
-    console.log('Received request:', request);
-  
+    console.error('Received request:', request);
+
+    // JSON-RPC notifications have no `id` field and MUST NOT receive a response.
+    // Examples: notifications/initialized, notifications/cancelled.
+    if (!('id' in request)) {
+      return;
+    }
+
     switch (request.method) {
       case 'initialize':
         // Respond with required initialization info
@@ -523,7 +529,7 @@ async function main() {
     process.exit(1);
   }
   
-  console.log('MCP Communicator server running...');
+  console.error('MCP Communicator server running...');
   new McpServer(); // Start the MCP server
 }
 

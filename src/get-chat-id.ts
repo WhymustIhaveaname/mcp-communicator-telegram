@@ -12,12 +12,12 @@ if (!token) {
 
 const bot = new TelegramBot(token, { polling: true });
 
-console.log('Bot is running. Please send any message to your bot (@cline_communicator_bot)...');
+console.error('Bot is running. Please send any message to your bot (@cline_communicator_bot)...');
 
 bot.on('message', (msg: TelegramBot.Message) => {
-  console.log(`Your Chat ID is: ${msg.chat.id}`);
-  console.log('You can now update your .env file with this ID');
-  console.log('Press Ctrl+C to exit');
+  console.error(`Your Chat ID is: ${msg.chat.id}`);
+  console.error('You can now update your .env file with this ID');
+  console.error('Press Ctrl+C to exit');
 });
 
 // Handle errors
