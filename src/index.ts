@@ -322,7 +322,8 @@ class McpServer {
                 listTools: true,
                 callTool: true
               }
-            }
+            },
+            instructions: "Human-in-the-loop bridge to a real person over a Telegram chat."
           }
         });
         break;
