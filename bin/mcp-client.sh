@@ -31,7 +31,10 @@ ensure_daemon() {
       rm -f "$PID_FILE" "$PORT_FILE"
     fi
 
-    nohup node "$DAEMON_BIN" >> "$LOG_FILE" 2>&1 &
+    # Close fd 200 for the daemon child. Otherwise it inherits the lock fd
+    # from our subshell and keeps flock held forever — a second wrapper's
+    # `flock -x 200` would then block indefinitely.
+    nohup node "$DAEMON_BIN" >> "$LOG_FILE" 2>&1 200>&- &
     disown
 
     # Wait up to 5s for the daemon to write its port file.
