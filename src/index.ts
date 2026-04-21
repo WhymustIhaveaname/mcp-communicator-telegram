@@ -30,7 +30,6 @@ if (!TELEGRAM_TOKEN || !CHAT_ID) {
 const validatedChatId = CHAT_ID as string;
 let bot: TelegramBot | null = null;
 const pendingQuestions = new Map<string, (answer: string) => void>();
-let lastQuestionId: string | null = null;
 
 async function initializeBot() {
   try {
@@ -61,11 +60,7 @@ async function initializeBot() {
         }
       }
 
-      if (!questionId) {
-        questionId = lastQuestionId;
-      }
-
-      console.error('Question ID (from reply or last):', questionId);
+      console.error('Question ID (from Reply only):', questionId);
       console.error('Pending questions:', Array.from(pendingQuestions.keys()));
 
       if (questionId && pendingQuestions.has(questionId)) {
@@ -73,7 +68,6 @@ async function initializeBot() {
         const resolver = pendingQuestions.get(questionId)!;
         resolver(msg.text);
         pendingQuestions.delete(questionId);
-        lastQuestionId = null;
         console.error('Question resolved and removed from pending');
       } else {
         console.error('No matching question found for this response');
@@ -130,7 +124,6 @@ async function askUser(params: AskUserParams): Promise<string> {
 
   const { question } = params;
   const questionId = Math.random().toString(36).substring(7);
-  lastQuestionId = questionId;
 
   console.error('Asking question with ID:', questionId);
 
