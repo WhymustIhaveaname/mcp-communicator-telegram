@@ -124,6 +124,21 @@ Two wrappers starting simultaneously: only one enters the critical section
 and may spawn; the other blocks on the lock and then sees the freshly-written
 `PORT_FILE` when it gets the lock, proceeding to connect without spawning.
 
+**Gotcha — fd inheritance must not leak the lock to the daemon.** `flock` is
+per-open-file-description, not per-process. A `fork` child inherits the
+parent's fd, sharing the same OFD and therefore co-holding the lock. The
+spawn line must explicitly close fd 200 (and stdin) on the daemon child:
+
+```bash
+nohup node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
+```
+
+Without `200>&-`, the daemon process keeps fd 200 open for its entire
+lifetime, the OFD's reference count never drops to zero, and the exclusive
+flock is never released. Every subsequent wrapper's `flock -x 200` then
+blocks forever (`wchan = locks_lock_inode_wait`). This was a real bug
+caught only during multi-CC acceptance — see commit `9a61e2d`.
+
 ## Lifecycle
 
 ### Daemon startup

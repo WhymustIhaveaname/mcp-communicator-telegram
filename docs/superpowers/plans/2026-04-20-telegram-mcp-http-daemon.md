@@ -747,7 +747,20 @@ count=$(pgrep -cf 'node.*build/index.js' || true)
 [[ "$count" -eq 1 ]] \
   && echo "PASS: exactly one daemon after concurrent spawn" \
   || { echo "FAIL: $count daemons after concurrent spawn"; pgrep -af 'node.*build/index.js'; exit 1; }
+
+# Also verify BOTH wrappers got a valid JSON-RPC response.
+# (The earlier counting-only check gave a false green when one wrapper was
+# silently blocked on flock and was SIGKILLed by `timeout 10` — it never
+# spawned a second daemon, so the count-based PASS lied. Always verify
+# both wrappers' stdout contains protocolVersion before declaring victory.)
+hit1=$(grep -c protocolVersion /tmp/wrap_race_1.out 2>/dev/null || echo 0)
+hit2=$(grep -c protocolVersion /tmp/wrap_race_2.out 2>/dev/null || echo 0)
+[[ "$hit1" -eq 1 && "$hit2" -eq 1 ]] \
+  || { echo "FAIL: wrapper responses missing (hit1=$hit1 hit2=$hit2)"; exit 1; }
 ```
+
+(To produce `/tmp/wrap_race_{1,2}.out`, redirect each wrapper's stdout
+inside the `for` loop: `... | timeout 10 "$WRAPPER" > "/tmp/wrap_race_$i.out" &`.)
 
 ```bash
 chmod +x /tmp/test-wrapper-race.sh
