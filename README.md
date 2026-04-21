@@ -2,41 +2,45 @@
 
 An MCP server that enables communication with users through Telegram. This server provides tools to interact with users via a Telegram bot, including asking questions, sending notifications, sharing files, and creating project archives.
 
-## Installation
+## Architecture
 
-### Via npm (global)
+Starting with v0.3.0, this project runs as a **singleton HTTP daemon** rather than a per-session stdio process.
+
+How it works:
+
+- `bin/mcp-client.sh` is the stdio entry point that each Claude Code session connects to.
+- On first use, the wrapper lazily spawns a background Node.js HTTP daemon (`build/index.js`).
+- Subsequent Claude Code sessions detect the running daemon and reuse it instead of starting a new one.
+- All MCP tool calls are forwarded from the wrapper to the daemon over HTTP on localhost.
+
+This design eliminates the race condition that occurred when multiple Claude Code sessions competed for the Telegram bot polling lock.
+
+## State Directory
+
+The daemon stores its runtime state in `~/.mcp-communicator-telegram/`:
+
+| File | Purpose |
+|------|---------|
+| `server.pid` | PID of the running daemon |
+| `server.port` | Port the daemon is listening on |
+| `server.log` | Daemon stdout/stderr log |
+| `spawn.lock` | Lock file used during daemon startup |
+
+## Port Selection
+
+The daemon binds to the first available port in the range **13579–13588** (inclusive). If all ports in the range are occupied, startup fails with an error.
+
+To force a specific starting port, set the `MCP_HTTP_PORT` environment variable:
 
 ```bash
-npm install -g mcp-communicator-telegram
+MCP_HTTP_PORT=13600 bin/mcp-client.sh
 ```
-
-### Via npx (on-demand)
-
-```bash
-npx mcptelegram
-```
-
-To get your Telegram chat ID:
-```bash
-npx mcptelegram-chatid
-```
-
-## Features
-
-- Ask questions to users through Telegram
-- Send notifications to users (no response required)
-- Send files to users via Telegram
-- Create and send project zip files (respecting .gitignore)
-- Receive responses asynchronously (waits indefinitely for response)
-- Support for reply-based message tracking
-- Secure chat ID validation
-- Error handling and logging
 
 ## Prerequisites
 
 - Node.js (v14 or higher)
 - A Telegram bot token (obtained from [@BotFather](https://t.me/botfather))
-- Your Telegram chat ID (can be obtained using the included utility)
+- Your Telegram chat ID (see below)
 
 ## Installation
 
@@ -46,9 +50,10 @@ git clone https://github.com/qpd-v/mcp-communicator-telegram.git
 cd mcp-communicator-telegram
 ```
 
-2. Install dependencies:
+2. Install dependencies and build:
 ```bash
 npm install
+npm run build
 ```
 
 3. Create a Telegram bot:
@@ -64,10 +69,9 @@ npm install
      ```
    - Run the chat ID utility:
      ```bash
-     npm run build
      node build/get-chat-id.js
      ```
-   - Send any message to your bot
+   - Send any message to your bot in Telegram
    - Copy the chat ID that appears in the console
    - Add the chat ID to your `.env` file:
      ```
@@ -77,28 +81,30 @@ npm install
 
 ## Configuration
 
-Add the server to your MCP settings file (usually located at `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json` on Windows):
+Add the server to your `.mcp.json` (or equivalent MCP settings file), pointing the `command` at the wrapper script:
 
 ```json
 {
   "mcpServers": {
     "mcp-communicator-telegram": {
-      "command": "node",
-      "args": ["path/to/mcp-communicator-telegram/build/index.js"],
-      "env": {
-        "TELEGRAM_TOKEN": "your_bot_token_here",
-        "CHAT_ID": "your_chat_id_here"
-      }
+      "type": "stdio",
+      "command": "/path/to/mcp-communicator-telegram/bin/mcp-client.sh"
     }
   }
 }
 ```
+
+Replace `/path/to/mcp-communicator-telegram` with the absolute path to your checkout.
+
+The wrapper reads `TELEGRAM_TOKEN` and `CHAT_ID` from the `.env` file in the project root, so no additional `env` block is needed in most setups.
 
 ## Available Tools
 
 ### ask_user
 
 Asks a question to the user via Telegram and waits for their response.
+
+**Important:** Only Telegram messages sent as a **Reply** to the bot's question message will resolve the pending `ask_user` call. Plain (non-reply) messages sent to the bot are logged and ignored. This prevents accidental responses from being mistaken for answers.
 
 Input Schema:
 ```json
@@ -229,6 +235,23 @@ Features:
 - Automatically cleans up the zip file after sending
 - Handles files up to 2GB in size
 
+## Reset / Troubleshooting
+
+If the daemon gets into a bad state (e.g., port conflict, stale PID file, Telegram polling error), force a clean restart:
+
+```bash
+pkill -f 'node.*build/index.js'
+rm -rf ~/.mcp-communicator-telegram
+```
+
+The next MCP tool call from any Claude Code session will spawn a fresh daemon.
+
+Other common issues:
+
+- **Daemon not starting**: Check `~/.mcp-communicator-telegram/server.log` for error output.
+- **Bot not responding to replies**: Ensure `CHAT_ID` in `.env` matches the chat where you are replying. The bot only accepts messages from the configured chat ID.
+- **Port range exhausted**: All ports 13579–13588 are in use. Either free a port or set `MCP_HTTP_PORT` to an available range start.
+
 ## Development
 
 Build the project:
@@ -256,7 +279,7 @@ npm run clean
 - The server only responds to messages from the configured chat ID
 - Environment variables are used for sensitive configuration
 - Message IDs are used to track question/answer pairs
-- The bot ignores messages without proper context
+- The bot ignores messages that are not replies to its own questions
 
 ## License
 
@@ -268,4 +291,4 @@ qpd-v
 
 ## Version
 
-0.2.1  # Major version bump for new features: notify_user, send_file, and zip_project tools
+0.3.0 — First release with the shared HTTP daemon, stdio wrapper (`bin/mcp-client.sh`), state directory (`~/.mcp-communicator-telegram`), and reply-only question routing.
