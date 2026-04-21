@@ -36,7 +36,7 @@ ensure_daemon() {
 
     # Wait up to 5s for the daemon to write its port file.
     for _ in $(seq 50); do
-      if [[ -f "$PORT_FILE" ]]; then
+      if [[ -s "$PORT_FILE" ]]; then
         exit 0
       fi
       sleep 0.1
@@ -51,6 +51,7 @@ ensure_daemon() {
 
 ensure_daemon
 PORT=$(cat "$PORT_FILE")
+[[ -n "$PORT" ]] || { echo "[mcp-client] empty $PORT_FILE after spawn" >&2; exit 1; }
 
 # Proxy newline-delimited JSON-RPC on stdin to the daemon over HTTP.
 while IFS= read -r line; do
