@@ -4,7 +4,7 @@
 
 **Goal:** Replace the per-CC-session stdio MCP server with a shared HTTP daemon so multiple Claude Code windows can concurrently use the same Telegram bot without racing `getUpdates`.
 
-**Architecture:** Single long-lived daemon process (`build/index.js`) listens on a loopback HTTP port, owns the only Telegram polling connection, and writes PID/port to `~/.mcp-communicator-telegram/`. Each CC session spawns a thin bash wrapper (`bin/mcp-client.sh`) that ensures the daemon is alive, reads the port, and proxies stdio JSON-RPC traffic to the daemon over HTTP. `.mcp.json` points at the wrapper instead of `node build/index.js`.
+**Architecture:** Single long-lived daemon process (`build/index.js`) listens on a loopback HTTP port, owns the only Telegram polling connection, and writes PID/port to `/tmp/mcp-communicator-telegram-$USER/`. Each CC session spawns a thin bash wrapper (`bin/mcp-client.sh`) that ensures the daemon is alive, reads the port, and proxies stdio JSON-RPC traffic to the daemon over HTTP. `.mcp.json` points at the wrapper instead of `node build/index.js`.
 
 **Tech Stack:** Node.js/TypeScript (`node-telegram-bot-api`, built-in `http`, `dotenv`), bash (`flock`, `curl`). No new npm dependencies.
 
@@ -74,13 +74,13 @@ set -e
 # Occupy the default port 13579
 nc -l 127.0.0.1 13579 >/dev/null &
 NC_PID=$!
-trap "kill $NC_PID 2>/dev/null; rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "kill $NC_PID 2>/dev/null; rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
 sleep 0.3
 
 # Start daemon; should pick 13580 because 13579 is taken
 cd /home/youran/Abaqus2024/mcp-communicator-telegram
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 nohup node build/index.js > /tmp/daemon-test.log 2>&1 &
 sleep 2
 
@@ -234,7 +234,7 @@ overrides the start if set."
 **Files:**
 - Modify: `src/index.ts` (imports, `main`, new helper)
 
-After the HTTP server binds, the daemon must advertise itself by writing `~/.mcp-communicator-telegram/server.pid` and `server.port` so the wrapper can find it.
+After the HTTP server binds, the daemon must advertise itself by writing `/tmp/mcp-communicator-telegram-$USER/server.pid` and `server.port` so the wrapper can find it.
 
 - [ ] **Step 1: Write a failing check**
 
@@ -243,16 +243,16 @@ Save `/tmp/test-state-write.sh`:
 ```bash
 #!/usr/bin/env bash
 set -e
-trap "rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
 cd /home/youran/Abaqus2024/mcp-communicator-telegram
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 nohup node build/index.js > /tmp/daemon-test.log 2>&1 &
 BG=$!
 sleep 2
 
-pid_file=~/.mcp-communicator-telegram/server.pid
-port_file=~/.mcp-communicator-telegram/server.port
+pid_file=/tmp/mcp-communicator-telegram-$USER/server.pid
+port_file=/tmp/mcp-communicator-telegram-$USER/server.port
 
 [[ -f "$pid_file" ]] || { echo "FAIL: no server.pid"; exit 1; }
 [[ -f "$port_file" ]] || { echo "FAIL: no server.port"; exit 1; }
@@ -278,7 +278,7 @@ Expected: **FAIL** ("no server.pid"), because no state writing exists yet.
 Add a constant block near the other constants (after `HTTP_HOST`):
 ```typescript
 import * as os from 'os';
-const STATE_DIR = path.join(os.homedir(), '.mcp-communicator-telegram');
+const STATE_DIR = path.join('/tmp', `mcp-communicator-telegram-${os.userInfo().username}`);
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
 ```
@@ -317,7 +317,7 @@ Expected: **PASS**.
 git add src/index.ts
 git commit -m "Write server.pid and server.port after successful bind
 
-State dir is ~/.mcp-communicator-telegram, following the
+State dir is /tmp/mcp-communicator-telegram-$USER, following the
 claude-memory-manager flat-single-value-file convention. These files
 let the wrapper script locate and health-check the daemon."
 ```
@@ -337,24 +337,24 @@ Save `/tmp/test-state-cleanup.sh`:
 ```bash
 #!/usr/bin/env bash
 set -e
-trap "rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
 cd /home/youran/Abaqus2024/mcp-communicator-telegram
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 nohup node build/index.js > /tmp/daemon-test.log 2>&1 &
 BG=$!
 sleep 2
 
-[[ -f ~/.mcp-communicator-telegram/server.pid ]] || { echo "setup fail: no pid file"; exit 1; }
+[[ -f /tmp/mcp-communicator-telegram-$USER/server.pid ]] || { echo "setup fail: no pid file"; exit 1; }
 
 kill -TERM "$BG"
 sleep 1
 
-[[ -f ~/.mcp-communicator-telegram/server.pid ]] \
+[[ -f /tmp/mcp-communicator-telegram-$USER/server.pid ]] \
   && { echo "FAIL: server.pid survived SIGTERM"; exit 1; } \
   || echo "server.pid cleaned"
 
-[[ -f ~/.mcp-communicator-telegram/server.port ]] \
+[[ -f /tmp/mcp-communicator-telegram-$USER/server.port ]] \
   && { echo "FAIL: server.port survived SIGTERM"; exit 1; } \
   || echo "server.port cleaned"
 
@@ -432,13 +432,13 @@ set -e
 cd /home/youran/Abaqus2024/mcp-communicator-telegram
 source .env
 
-trap "rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 nohup node build/index.js > /tmp/daemon-test.log 2>&1 &
 sleep 2
 
-PORT=$(cat ~/.mcp-communicator-telegram/server.port)
+PORT=$(cat /tmp/mcp-communicator-telegram-$USER/server.port)
 
 # Fire ask_user in background (will block waiting for a reply)
 (curl -sS -X POST "http://127.0.0.1:$PORT/mcp" \
@@ -548,9 +548,9 @@ Save `/tmp/test-wrapper-basic.sh`:
 ```bash
 #!/usr/bin/env bash
 set -e
-trap "rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 pkill -f 'node.*build/index.js' 2>/dev/null || true
 
 WRAPPER=/home/youran/Abaqus2024/mcp-communicator-telegram/bin/mcp-client.sh
@@ -587,7 +587,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_BIN="$SCRIPT_DIR/../build/index.js"
-STATE_DIR="$HOME/.mcp-communicator-telegram"
+STATE_DIR="/tmp/mcp-communicator-telegram-${USER:-$(id -un)}"
 PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"
@@ -687,17 +687,17 @@ Save `/tmp/test-wrapper-selfheal.sh`:
 ```bash
 #!/usr/bin/env bash
 set -e
-trap "rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
 WRAPPER=/home/youran/Abaqus2024/mcp-communicator-telegram/bin/mcp-client.sh
 
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 pkill -f 'node.*build/index.js' 2>/dev/null || true
 
 # First run spawns a fresh daemon
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' \
   | timeout 10 "$WRAPPER" > /dev/null
-first_pid=$(cat ~/.mcp-communicator-telegram/server.pid)
+first_pid=$(cat /tmp/mcp-communicator-telegram-$USER/server.pid)
 echo "First daemon pid: $first_pid"
 
 # Nuke it
@@ -707,7 +707,7 @@ sleep 0.5
 # Second run should detect the dead pid, clean state, and respawn
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' \
   | timeout 10 "$WRAPPER" > /dev/null
-second_pid=$(cat ~/.mcp-communicator-telegram/server.pid)
+second_pid=$(cat /tmp/mcp-communicator-telegram-$USER/server.pid)
 echo "Second daemon pid: $second_pid"
 
 [[ "$first_pid" != "$second_pid" ]] \
@@ -729,11 +729,11 @@ Save `/tmp/test-wrapper-race.sh`:
 ```bash
 #!/usr/bin/env bash
 set -e
-trap "rm -rf ~/.mcp-communicator-telegram; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
+trap "rm -rf /tmp/mcp-communicator-telegram-$USER; pkill -f 'node.*build/index.js' 2>/dev/null; exit" EXIT
 
 WRAPPER=/home/youran/Abaqus2024/mcp-communicator-telegram/bin/mcp-client.sh
 
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 pkill -f 'node.*build/index.js' 2>/dev/null || true
 
 # Fire two wrappers at essentially the same time
@@ -771,7 +771,7 @@ This is the final production cutover. The existing `.mcp.json` from the earlier 
 
 ```bash
 pkill -f 'node.*build/index.js' 2>/dev/null || true
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 ```
 
 - [ ] **Step 2: Overwrite `/home/youran/Abaqus2024/.mcp.json`**
@@ -824,10 +824,10 @@ to:
 Read `README.md` first to see the current structure, then rewrite the installation / configuration / troubleshooting sections. Keep these points:
 
 - This server now runs as a singleton HTTP daemon, lazily spawned by `bin/mcp-client.sh`.
-- State lives in `~/.mcp-communicator-telegram/`: `server.pid`, `server.port`, `server.log`.
+- State lives in `/tmp/mcp-communicator-telegram-$USER/`: `server.pid`, `server.port`, `server.log`.
 - Default port is 13579, scanning up to 13588 on conflict. Override with `MCP_HTTP_PORT`.
 - `.mcp.json` entry is stdio pointing at `bin/mcp-client.sh` (example given).
-- To reset: `pkill -f 'node.*build/index.js' ; rm -rf ~/.mcp-communicator-telegram`.
+- To reset: `pkill -f 'node.*build/index.js' ; rm -rf /tmp/mcp-communicator-telegram-$USER`.
 - Only Telegram messages sent via **Reply** resolve pending `ask_user` questions; plain messages are ignored.
 
 Keep existing sections about `get-chat-id.js`, `.env` setup, and tool descriptions.
@@ -847,7 +847,7 @@ git add package.json README.md
 git commit -m "Bump to 0.3.0 and document the HTTP daemon architecture
 
 0.3.0 is the first release with the shared HTTP daemon, stdio wrapper,
-state dir ~/.mcp-communicator-telegram, and reply-only question
+state dir /tmp/mcp-communicator-telegram-$USER, and reply-only question
 routing. README covers the new topology, default port range, and
 troubleshooting/reset procedure."
 ```
@@ -864,7 +864,7 @@ Requires a human in the loop for the Telegram side. Cannot be fully automated.
 
 ```bash
 pkill -f 'node.*build/index.js' 2>/dev/null || true
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 rm -f /tmp/daemon-test.log
 ```
 
@@ -891,7 +891,7 @@ Each CC session's `ask_user` tool call should return the answer sent in response
 
 - [ ] **Step 6: Negative check — plain message is ignored**
 
-While a fresh `ask_user` is pending, send a plain (non-Reply) message in the chat. The pending `ask_user` should **not** resolve. Daemon log (`~/.mcp-communicator-telegram/server.log`) should contain "No matching question found".
+While a fresh `ask_user` is pending, send a plain (non-Reply) message in the chat. The pending `ask_user` should **not** resolve. Daemon log (`/tmp/mcp-communicator-telegram-$USER/server.log`) should contain "No matching question found".
 
 - [ ] **Step 7: Wrap up**
 

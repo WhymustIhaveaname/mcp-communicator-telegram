@@ -19,7 +19,7 @@ const CHAT_ID = process.env.CHAT_ID;
 const HTTP_PORT_START = parseInt(process.env.MCP_HTTP_PORT ?? '13579', 10);
 const HTTP_PORT_TRIES = 10;
 const HTTP_HOST = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
-const STATE_DIR = path.join(os.homedir(), '.mcp-communicator-telegram');
+const STATE_DIR = path.join('/tmp', `mcp-communicator-telegram-${os.userInfo().username}`);
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
 

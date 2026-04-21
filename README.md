@@ -17,7 +17,7 @@ This design eliminates the race condition that occurred when multiple Claude Cod
 
 ## State Directory
 
-The daemon stores its runtime state in `~/.mcp-communicator-telegram/`:
+The daemon stores its runtime state in `/tmp/mcp-communicator-telegram-$USER/`:
 
 | File | Purpose |
 |------|---------|
@@ -241,14 +241,14 @@ If the daemon gets into a bad state (e.g., port conflict, stale PID file, Telegr
 
 ```bash
 pkill -f 'node.*build/index.js'
-rm -rf ~/.mcp-communicator-telegram
+rm -rf /tmp/mcp-communicator-telegram-$USER
 ```
 
 The next MCP tool call from any Claude Code session will spawn a fresh daemon.
 
 Other common issues:
 
-- **Daemon not starting**: Check `~/.mcp-communicator-telegram/server.log` for error output.
+- **Daemon not starting**: Check `/tmp/mcp-communicator-telegram-$USER/server.log` for error output.
 - **Bot not responding to replies**: Ensure `CHAT_ID` in `.env` matches the chat where you are replying. The bot only accepts messages from the configured chat ID.
 - **Port range exhausted**: All ports 13579–13588 are in use. Either free a port or set `MCP_HTTP_PORT` to an available range start.
 
@@ -291,4 +291,4 @@ qpd-v
 
 ## Version
 
-0.3.0 — First release with the shared HTTP daemon, stdio wrapper (`bin/mcp-client.sh`), state directory (`~/.mcp-communicator-telegram`), and reply-only question routing.
+0.3.0 — First release with the shared HTTP daemon, stdio wrapper (`bin/mcp-client.sh`), state directory (`/tmp/mcp-communicator-telegram-$USER`), and reply-only question routing.

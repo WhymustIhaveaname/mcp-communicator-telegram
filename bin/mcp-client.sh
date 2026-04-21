@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_BIN="$SCRIPT_DIR/../build/index.js"
-STATE_DIR="$HOME/.mcp-communicator-telegram"
+STATE_DIR="/tmp/mcp-communicator-telegram-${USER:-$(id -un)}"
 PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"

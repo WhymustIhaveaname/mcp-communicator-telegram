@@ -72,11 +72,11 @@ daemon already alive.
 
 ## State Layout
 
-Following the `claude-memory-manager` convention — flat single-value files in
-a home dot-dir named after the service:
+Reboot-transient runtime metadata lives in `/tmp` with a per-user suffix to
+avoid collisions on multi-user machines:
 
 ```
-~/.mcp-communicator-telegram/
+/tmp/mcp-communicator-telegram-$USER/
 ├── server.pid        # daemon PID (one integer)
 ├── server.port       # daemon listening port (one integer)
 ├── server.log        # daemon stdout + stderr
@@ -194,7 +194,7 @@ ambiguous. The explicit-reply-only rule is unambiguous and scales.
 | Condition | Behavior |
 |---|---|
 | Another wrapper holds `spawn.lock` | `flock` blocks until released — automatic queueing. |
-| 5 seconds elapse without `server.port` appearing | Emit `[mcp-client] daemon failed to start, see ~/.mcp-communicator-telegram/server.log` to stderr; exit 1. CC surfaces this as MCP connection failure. |
+| 5 seconds elapse without `server.port` appearing | Emit `[mcp-client] daemon failed to start, see /tmp/mcp-communicator-telegram-$USER/server.log` to stderr; exit 1. CC surfaces this as MCP connection failure. |
 | Daemon dies mid-request (curl returns ECONNREFUSED) | Current request returns HTTP error to CC via JSON-RPC; next request retriggers pid/port probe and lazy respawn. **No automatic retry of the failed request** — CC sees the error via MCP's normal error channel. |
 | CC closes stdin | `while read` hits EOF, wrapper exits cleanly. |
 
@@ -235,12 +235,12 @@ Executed in order after implementation:
    contents.
 2. **Port conflict fallback.** `nc -l 13579` in one terminal, then run the
    wrapper. Expect daemon to land on 13580 and write 13580 to `server.port`.
-3. **Self-healing respawn.** `kill -9 $(cat ~/.mcp-communicator-telegram/server.pid)`, then rerun the wrapper. Expect detection of dead pid,
+3. **Self-healing respawn.** `kill -9 $(cat /tmp/mcp-communicator-telegram-$USER/server.pid)`, then rerun the wrapper. Expect detection of dead pid,
    cleanup, respawn with new pid.
 4. **Spawn race.** Two shells invoke the wrapper nearly simultaneously.
    Expect exactly one daemon process (`pgrep -cf "node.*build/index.js" == 1`).
 5. **Multi-session sharing (final acceptance).** Close all CC sessions,
-   `rm -rf ~/.mcp-communicator-telegram`. Open two CC sessions, both
+   `rm -rf /tmp/mcp-communicator-telegram-$USER`. Open two CC sessions, both
    starting `/supervisor`. Each calls `ask_user`. Both must receive the
    Telegram user's replies — **user must use Telegram's "Reply" feature**
    when answering each question, since the plain-message fallback is
