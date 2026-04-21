@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
+import * as os from 'os';
 import archiver from 'archiver';
 import ignore from 'ignore';
 
@@ -18,6 +19,9 @@ const CHAT_ID = process.env.CHAT_ID;
 const HTTP_PORT_START = parseInt(process.env.MCP_HTTP_PORT ?? '13579', 10);
 const HTTP_PORT_TRIES = 10;
 const HTTP_HOST = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
+const STATE_DIR = path.join(os.homedir(), '.mcp-communicator-telegram');
+const PID_FILE = path.join(STATE_DIR, 'server.pid');
+const PORT_FILE = path.join(STATE_DIR, 'server.port');
 
 if (!TELEGRAM_TOKEN || !CHAT_ID) {
   throw new Error('TELEGRAM_TOKEN and CHAT_ID are required in .env file');
@@ -493,7 +497,12 @@ async function main() {
     console.error('Failed to initialize bot, exiting...');
     process.exit(1);
   }
-  await startHttpServer();
+  const { port } = await startHttpServer();
+
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(PID_FILE, `${process.pid}\n`);
+  fs.writeFileSync(PORT_FILE, `${port}\n`);
+  console.error(`State recorded: pid=${process.pid} port=${port} in ${STATE_DIR}`);
 }
 
 main().catch(error => {
