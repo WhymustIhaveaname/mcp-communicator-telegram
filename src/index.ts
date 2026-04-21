@@ -15,7 +15,8 @@ process.env.NTBA_FIX_350 = '1';
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
-const HTTP_PORT = parseInt(process.env.MCP_HTTP_PORT ?? '8765', 10);
+const HTTP_PORT_START = parseInt(process.env.MCP_HTTP_PORT ?? '13579', 10);
+const HTTP_PORT_TRIES = 10;
 const HTTP_HOST = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
 
 if (!TELEGRAM_TOKEN || !CHAT_ID) {
@@ -400,7 +401,7 @@ async function dispatchRequest(request: any): Promise<any | null> {
   }
 }
 
-function startHttpServer() {
+async function startHttpServer(): Promise<{ server: http.Server; port: number }> {
   const server = http.createServer((req, res) => {
     if (req.method !== 'POST' || !req.url?.startsWith('/mcp')) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -446,16 +447,35 @@ function startHttpServer() {
     });
   });
 
-  // ask_user can block indefinitely on a human reply; disable all idle timeouts.
   server.requestTimeout = 0;
   server.headersTimeout = 0;
   server.keepAliveTimeout = 0;
 
-  server.listen(HTTP_PORT, HTTP_HOST, () => {
-    console.error(`MCP HTTP server listening on http://${HTTP_HOST}:${HTTP_PORT}/mcp`);
-  });
+  for (let offset = 0; offset < HTTP_PORT_TRIES; offset++) {
+    const candidate = HTTP_PORT_START + offset;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: NodeJS.ErrnoException) => {
+          server.removeListener('listening', onListen);
+          reject(err);
+        };
+        const onListen = () => {
+          server.removeListener('error', onError);
+          resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListen);
+        server.listen(candidate, HTTP_HOST);
+      });
+      console.error(`MCP HTTP server listening on http://${HTTP_HOST}:${candidate}/mcp`);
+      return { server, port: candidate };
+    } catch (err: any) {
+      if (err.code !== 'EADDRINUSE') throw err;
+      console.error(`Port ${candidate} in use, trying next`);
+    }
+  }
 
-  return server;
+  throw new Error(`No free port in range ${HTTP_PORT_START}-${HTTP_PORT_START + HTTP_PORT_TRIES - 1}`);
 }
 
 const shutdown = () => {
@@ -473,7 +493,7 @@ async function main() {
     console.error('Failed to initialize bot, exiting...');
     process.exit(1);
   }
-  startHttpServer();
+  await startHttpServer();
 }
 
 main().catch(error => {
