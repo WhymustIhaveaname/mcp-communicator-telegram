@@ -499,9 +499,11 @@ async function main() {
   }
   const { port } = await startHttpServer();
 
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(PID_FILE, `${process.pid}\n`);
-  fs.writeFileSync(PORT_FILE, `${port}\n`);
+  // mode 0o700 keeps server.log (which contains ask_user question/answer
+  // bodies) private on multi-user hosts.
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600 });
+  fs.writeFileSync(PORT_FILE, `${port}\n`, { mode: 0o600 });
   console.error(`State recorded: pid=${process.pid} port=${port} in ${STATE_DIR}`);
 }
 

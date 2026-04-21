@@ -15,6 +15,10 @@ PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"
 LOCK_FILE="$STATE_DIR/spawn.lock"
 
+# 0o700 state dir: server.log contains Telegram question/answer bodies, so on
+# a multi-user host it must not be readable by peers. umask 077 also covers
+# any files the daemon writes (server.pid, server.port) with 0o600.
+umask 077
 mkdir -p "$STATE_DIR"
 
 ensure_daemon() {
@@ -31,10 +35,10 @@ ensure_daemon() {
       rm -f "$PID_FILE" "$PORT_FILE"
     fi
 
-    # Close fd 200 for the daemon child. Otherwise it inherits the lock fd
-    # from our subshell and keeps flock held forever — a second wrapper's
-    # `flock -x 200` would then block indefinitely.
-    nohup node "$DAEMON_BIN" >> "$LOG_FILE" 2>&1 200>&- &
+    # Close fd 200 for the daemon child so it does not inherit the lock fd
+    # from our subshell and keep flock held forever. Close stdin (</dev/null)
+    # so the daemon is not pinned to our pipe if CC exits.
+    nohup node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
     disown
 
     # Wait up to 5s for the daemon to write its port file.
