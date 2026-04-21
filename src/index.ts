@@ -482,14 +482,21 @@ async function startHttpServer(): Promise<{ server: http.Server; port: number }>
   throw new Error(`No free port in range ${HTTP_PORT_START}-${HTTP_PORT_START + HTTP_PORT_TRIES - 1}`);
 }
 
+const cleanupState = () => {
+  try { fs.unlinkSync(PID_FILE); } catch {}
+  try { fs.unlinkSync(PORT_FILE); } catch {}
+};
+
 const shutdown = () => {
   if (bot) {
     bot.stopPolling();
   }
+  cleanupState();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+process.on('exit', cleanupState);
 
 async function main() {
   const success = await initializeBot();
