@@ -51,7 +51,13 @@ const PORT_FILE = path.join(STATE_DIR, 'server.port');
 
 const validatedChatId = CHAT_ID as string;
 let bot: TelegramBot | null = null;
-const pendingQuestions = new Map<string, (answer: string) => void>();
+
+interface PendingReply {
+  text: string;
+  chatId: number;
+  messageId: number;
+}
+const pendingQuestions = new Map<string, (reply: PendingReply) => void>();
 
 async function initializeBot() {
   try {
@@ -88,7 +94,11 @@ async function initializeBot() {
       if (questionId && pendingQuestions.has(questionId)) {
         console.error('Found matching question with ID:', questionId);
         const resolver = pendingQuestions.get(questionId)!;
-        resolver(msg.text);
+        resolver({
+          text: msg.text,
+          chatId: msg.chat.id,
+          messageId: msg.message_id,
+        });
         pendingQuestions.delete(questionId);
         console.error('Question resolved and removed from pending');
       } else {
@@ -139,7 +149,7 @@ async function notifyUser(params: NotifyUserParams): Promise<void> {
   }
 }
 
-async function askUser(params: AskUserParams): Promise<string> {
+async function askUser(params: AskUserParams): Promise<PendingReply> {
   if (!bot) {
     throw new Error('Bot not initialized');
   }
@@ -158,15 +168,36 @@ async function askUser(params: AskUserParams): Promise<string> {
     });
     console.error('Question sent successfully');
 
-    const response = await new Promise<string>((resolve) => {
+    const reply = await new Promise<PendingReply>((resolve) => {
       pendingQuestions.set(questionId, resolve);
     });
 
-    console.error('Received response:', response);
-    return response;
+    console.error('Received response:', reply.text);
+    return reply;
   } catch (error: any) {
     console.error('Error in askUser:', error);
     throw new Error(`Failed to get response: ${error.message}`);
+  }
+}
+
+// Acknowledge that the user's reply made it back to Claude Code by reacting
+// to *their* message with 👌. The contract callers rely on: if you see the
+// 👌 in Telegram, the ask_user tool call has unblocked on the CC side. So
+// this MUST run only after the JSON-RPC response is flushed to the wrapper.
+async function reactWithOk(chatId: number, messageId: number): Promise<void> {
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setMessageReaction`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: [{ type: 'emoji', emoji: '👌' }],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '<no body>');
+    throw new Error(`setMessageReaction ${res.status}: ${body}`);
   }
 }
 
@@ -254,8 +285,16 @@ async function zipProject(params: { directory?: string } = {}): Promise<void> {
   }
 }
 
+// JSON-RPC dispatcher result. `postCommit` runs after the HTTP response has
+// been flushed to the wrapper, so callers can schedule effects that must be
+// observable to the user only AFTER Claude Code receives the tool result.
+type DispatchResult = {
+  response: any;
+  postCommit?: () => Promise<void>;
+};
+
 // JSON-RPC dispatcher: returns the response object, or null for notifications.
-async function dispatchRequest(request: any): Promise<any | null> {
+async function dispatchRequest(request: any): Promise<DispatchResult | null> {
   // JSON-RPC notifications have no `id` field and MUST NOT receive a response.
   if (!('id' in request)) {
     return null;
@@ -264,30 +303,33 @@ async function dispatchRequest(request: any): Promise<any | null> {
   switch (request.method) {
     case 'initialize':
       return {
-        jsonrpc: "2.0",
-        id: request.id,
-        result: {
-          protocolVersion: "2024-11-05",
-          serverInfo: {
-            name: "mcp-communicator-telegram",
-            version: "0.3.0"
-          },
-          capabilities: {
-            tools: {
-              listTools: true,
-              callTool: true
-            }
-          },
-          instructions: "Human-in-the-loop bridge to a real person over a Telegram chat."
+        response: {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            protocolVersion: "2024-11-05",
+            serverInfo: {
+              name: "mcp-communicator-telegram",
+              version: "0.3.0"
+            },
+            capabilities: {
+              tools: {
+                listTools: true,
+                callTool: true
+              }
+            },
+            instructions: "Human-in-the-loop bridge to a real person over a Telegram chat."
+          }
         }
       };
 
     case 'tools/list':
       return {
-        jsonrpc: "2.0",
-        id: request.id,
-        result: {
-          tools: [
+        response: {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            tools: [
             {
               name: "ask_user",
               description: "Ask the user a question via Telegram and wait for their response",
@@ -344,17 +386,28 @@ async function dispatchRequest(request: any): Promise<any | null> {
                 required: []
               }
             }
-          ]
+            ]
+          }
         }
       };
 
     case 'tools/call':
       try {
         let result: any;
+        let postCommit: (() => Promise<void>) | undefined;
         switch (request.params.name) {
           case 'ask_user': {
-            const answer = await askUser(request.params.arguments);
-            result = { content: [{ type: "text", text: answer }] };
+            const reply = await askUser(request.params.arguments);
+            result = { content: [{ type: "text", text: reply.text }] };
+            // Schedule the 👌 reaction for AFTER the response is flushed —
+            // see DispatchResult docstring and reactWithOk's contract.
+            postCommit = async () => {
+              try {
+                await reactWithOk(reply.chatId, reply.messageId);
+              } catch (err: any) {
+                console.error('Failed to react with 👌:', err?.message ?? err);
+              }
+            };
             break;
           }
           case 'notify_user': {
@@ -402,20 +455,27 @@ async function dispatchRequest(request: any): Promise<any | null> {
           default:
             throw new Error(`Unknown tool: ${request.params.name}`);
         }
-        return { jsonrpc: "2.0", id: request.id, result };
+        return {
+          response: { jsonrpc: "2.0", id: request.id, result },
+          postCommit,
+        };
       } catch (error: any) {
         return {
-          jsonrpc: "2.0",
-          id: request.id,
-          error: { code: -32000, message: error.message }
+          response: {
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32000, message: error.message }
+          }
         };
       }
 
     default:
       return {
-        jsonrpc: "2.0",
-        id: request.id,
-        error: { code: -32601, message: `Method not found: ${request.method}` }
+        response: {
+          jsonrpc: "2.0",
+          id: request.id,
+          error: { code: -32601, message: `Method not found: ${request.method}` }
+        }
       };
   }
 }
@@ -446,13 +506,18 @@ async function startHttpServer(): Promise<{ server: http.Server; port: number }>
       }
 
       try {
-        const response = await dispatchRequest(request);
-        if (response === null) {
+        const dispatched = await dispatchRequest(request);
+        if (dispatched === null) {
           res.writeHead(202);
           res.end();
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(response));
+          // res.end(data, cb): cb fires once the body is flushed to the OS
+          // socket, which is the closest hook we have to "wrapper has the
+          // bytes in hand". postCommit must not run before this.
+          res.end(JSON.stringify(dispatched.response), () => {
+            dispatched.postCommit?.();
+          });
         }
       } catch (error: any) {
         console.error('Error handling request:', error);
