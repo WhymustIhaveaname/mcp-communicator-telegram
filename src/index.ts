@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import archiver from 'archiver';
 import ignore from 'ignore';
 
@@ -19,13 +20,27 @@ const CHAT_ID = process.env.CHAT_ID;
 const HTTP_PORT_START = parseInt(process.env.MCP_HTTP_PORT ?? '13579', 10);
 const HTTP_PORT_TRIES = 10;
 const HTTP_HOST = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
-const STATE_DIR = path.join('/tmp', `mcp-communicator-telegram-${os.userInfo().username}`);
-const PID_FILE = path.join(STATE_DIR, 'server.pid');
-const PORT_FILE = path.join(STATE_DIR, 'server.port');
 
 if (!TELEGRAM_TOKEN || !CHAT_ID) {
   throw new Error('TELEGRAM_TOKEN and CHAT_ID are required in .env file');
 }
+
+// STATE_DIR is keyed by sha256(TELEGRAM_TOKEN). Telegram's getUpdates is
+// mutually exclusive at the bot-token level, so one daemon per token is the
+// physical maximum; hashing the token (not the chat id) lets multiple
+// installs with different bots run side by side without colliding, and lets
+// multiple Claude Code sessions sharing the same bot reuse one daemon.
+const instanceHash = crypto
+  .createHash('sha256')
+  .update(TELEGRAM_TOKEN)
+  .digest('hex')
+  .slice(0, 8);
+const STATE_DIR = path.join(
+  '/tmp',
+  `mcp-communicator-telegram-${os.userInfo().username}-${instanceHash}`,
+);
+const PID_FILE = path.join(STATE_DIR, 'server.pid');
+const PORT_FILE = path.join(STATE_DIR, 'server.port');
 
 const validatedChatId = CHAT_ID as string;
 let bot: TelegramBot | null = null;

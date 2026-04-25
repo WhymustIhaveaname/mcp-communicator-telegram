@@ -9,7 +9,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_BIN="$SCRIPT_DIR/../build/index.js"
-STATE_DIR="/tmp/mcp-communicator-telegram-${USER:-$(id -un)}"
+ENV_FILE="$SCRIPT_DIR/../.env"
+
+# Match the daemon's STATE_DIR keying: sha256(TELEGRAM_TOKEN) suffix lets
+# different bots coexist and identical bots (any chat id) share one daemon.
+INSTANCE_HASH=$(
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE" >/dev/null 2>&1 || true
+  printf '%s' "${TELEGRAM_TOKEN:-}" | sha256sum | cut -c1-8
+)
+if [[ -z "$INSTANCE_HASH" || "$INSTANCE_HASH" == "$(printf '' | sha256sum | cut -c1-8)" ]]; then
+  echo "[mcp-client] TELEGRAM_TOKEN not found in $ENV_FILE" >&2
+  exit 1
+fi
+STATE_DIR="/tmp/mcp-communicator-telegram-${USER:-$(id -un)}-${INSTANCE_HASH}"
 PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"
