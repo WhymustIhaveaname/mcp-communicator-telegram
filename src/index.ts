@@ -6,8 +6,15 @@ import * as path from 'path';
 import * as http from 'http';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import * as dns from 'dns';
 import archiver from 'archiver';
 import ignore from 'ignore';
+
+// api.telegram.org resolves to both A and AAAA records. When the host's
+// IPv6 route is dead but DNS still hands out the AAAA first (default OS
+// order), every Telegram HTTPS call ends in `EFATAL: AggregateError` and
+// the bot stops working. Pinning IPv4-first sidesteps that.
+dns.setDefaultResultOrder('ipv4first');
 
 // Load .env from the package root so the daemon works regardless of cwd.
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
