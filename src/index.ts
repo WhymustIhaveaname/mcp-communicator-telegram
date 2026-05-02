@@ -32,11 +32,12 @@ if (!TELEGRAM_TOKEN || !CHAT_ID) {
   throw new Error('TELEGRAM_TOKEN and CHAT_ID are required in .env file');
 }
 
-// STATE_DIR is keyed by sha256(TELEGRAM_TOKEN). Telegram's getUpdates is
+// STATE_DIR is keyed only by sha256(TELEGRAM_TOKEN). Telegram's getUpdates is
 // mutually exclusive at the bot-token level, so one daemon per token is the
-// physical maximum; hashing the token (not the chat id) lets multiple
-// installs with different bots run side by side without colliding, and lets
-// multiple Claude Code sessions sharing the same bot reuse one daemon.
+// physical maximum; we therefore key by token alone and let any user with the
+// same token reuse the same daemon. Different bots get different hashes and
+// run side by side. The wrapper sets group=sudo + setgid (2770) so all sudo
+// members can share the dir; new files inherit gid=sudo and get mode 0o660.
 const instanceHash = crypto
   .createHash('sha256')
   .update(TELEGRAM_TOKEN)
@@ -44,7 +45,7 @@ const instanceHash = crypto
   .slice(0, 8);
 const STATE_DIR = path.join(
   '/tmp',
-  `mcp-communicator-telegram-${os.userInfo().username}-${instanceHash}`,
+  `mcp-communicator-telegram-${instanceHash}`,
 );
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
@@ -310,7 +311,7 @@ async function dispatchRequest(request: any): Promise<DispatchResult | null> {
             protocolVersion: "2024-11-05",
             serverInfo: {
               name: "mcp-communicator-telegram",
-              version: "0.3.0"
+              version: "0.3.1"
             },
             capabilities: {
               tools: {
@@ -586,11 +587,13 @@ async function main() {
   }
   const { port } = await startHttpServer();
 
-  // mode 0o700 keeps server.log (which contains ask_user question/answer
-  // bodies) private on multi-user hosts.
-  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600 });
-  fs.writeFileSync(PORT_FILE, `${port}\n`, { mode: 0o600 });
+  // mode 0o2770 = setgid + group rwx so other sudo members can share the dir
+  // (see STATE_DIR keying comment). When the wrapper spawned us, it already
+  // did mkdir + chgrp sudo + chmod 2770, so this path is normally a no-op;
+  // the explicit mode here is for the standalone-launch case.
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o2770 });
+  fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o660 });
+  fs.writeFileSync(PORT_FILE, `${port}\n`, { mode: 0o660 });
   console.error(`State recorded: pid=${process.pid} port=${port} in ${STATE_DIR}`);
 }
 

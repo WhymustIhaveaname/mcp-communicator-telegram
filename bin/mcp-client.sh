@@ -23,17 +23,23 @@ if [[ -z "$INSTANCE_HASH" || "$INSTANCE_HASH" == "$(printf '' | sha256sum | cut 
   echo "[mcp-client] TELEGRAM_TOKEN not found in $ENV_FILE" >&2
   exit 1
 fi
-STATE_DIR="/tmp/mcp-communicator-telegram-${USER:-$(id -un)}-${INSTANCE_HASH}"
+STATE_DIR="/tmp/mcp-communicator-telegram-${INSTANCE_HASH}"
 PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"
 LOCK_FILE="$STATE_DIR/spawn.lock"
 
-# 0o700 state dir: server.log contains Telegram question/answer bodies, so on
-# a multi-user host it must not be readable by peers. umask 077 also covers
-# any files the daemon writes (server.pid, server.port) with 0o600.
-umask 077
+# State dir keyed only by sha256(TELEGRAM_TOKEN) so any user with the same
+# token shares one daemon (Telegram's getUpdates is mutually exclusive at the
+# bot-token level — per-user dirs would cause two daemons to compete for the
+# same poll). Group=sudo + setgid (2770) so all sudo members can spawn /
+# inspect / clean the shared dir; files inherit gid=sudo via setgid and get
+# 0o660 from umask 007. server.log holds Q/A bodies — readable inside sudo
+# group, which on this box is the shared-credential trust boundary anyway.
+umask 007
 mkdir -p "$STATE_DIR"
+chgrp sudo "$STATE_DIR" 2>/dev/null || true
+chmod 2770 "$STATE_DIR" 2>/dev/null || true
 
 ensure_daemon() {
   # Subshell scopes fd 200 (and therefore the flock) to the critical section.

@@ -17,7 +17,9 @@ This design eliminates the race condition that occurred when multiple Claude Cod
 
 ## State Directory
 
-The daemon stores its runtime state in `/tmp/mcp-communicator-telegram-$USER/`:
+The daemon stores its runtime state in `/tmp/mcp-communicator-telegram-<token-hash>/`, where `<token-hash>` is the first 8 hex chars of `sha256(TELEGRAM_TOKEN)`. Keying by token (not by user) means any OS user pointing at a wrapper that resolves the same token reuses the same daemon — Telegram's `getUpdates` is mutually exclusive at the bot-token level, so per-user daemons would compete for the same poll and lose updates. Different bots get different hashes and run side by side.
+
+The dir is created mode `2770` (setgid + group `rwx`) with group `sudo`, so any sudo member can spawn / inspect / clean it. Files inside inherit `gid=sudo` via setgid and are mode `0o660`. `server.log` therefore contains Q/A bodies readable inside the sudo group — fine on a host where credentials are already shared inside that group, not fine on a generic multi-user host.
 
 | File | Purpose |
 |------|---------|
@@ -241,14 +243,14 @@ If the daemon gets into a bad state (e.g., port conflict, stale PID file, Telegr
 
 ```bash
 pkill -f 'node.*build/index.js'
-rm -rf /tmp/mcp-communicator-telegram-$USER
+rm -rf /tmp/mcp-communicator-telegram-*
 ```
 
 The next MCP tool call from any Claude Code session will spawn a fresh daemon.
 
 Other common issues:
 
-- **Daemon not starting**: Check `/tmp/mcp-communicator-telegram-$USER/server.log` for error output.
+- **Daemon not starting**: Check `/tmp/mcp-communicator-telegram-<token-hash>/server.log` for error output.
 - **Bot not responding to replies**: Ensure `CHAT_ID` in `.env` matches the chat where you are replying. The bot only accepts messages from the configured chat ID.
 - **Port range exhausted**: All ports 13579–13588 are in use. Either free a port or set `MCP_HTTP_PORT` to an available range start.
 
@@ -291,4 +293,6 @@ qpd-v
 
 ## Version
 
-0.3.0 — First release with the shared HTTP daemon, stdio wrapper (`bin/mcp-client.sh`), state directory (`/tmp/mcp-communicator-telegram-$USER`), and reply-only question routing.
+0.3.0 — First release with the shared HTTP daemon, stdio wrapper (`bin/mcp-client.sh`), per-user state directory, and reply-only question routing.
+
+0.3.1 — State directory keyed by `sha256(TELEGRAM_TOKEN)` only (no `$USER`), mode `2770` group `sudo`, so all sudo members sharing a token share one daemon instead of competing for Telegram's exclusive long poll.
