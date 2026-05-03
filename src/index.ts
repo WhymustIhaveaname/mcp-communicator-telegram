@@ -333,7 +333,7 @@ async function dispatchRequest(request: any): Promise<DispatchResult | null> {
             tools: [
             {
               name: "ask_user",
-              description: "Ask the user a question via Telegram and wait for their response",
+              description: "Ask the user a question via Telegram and wait for their response (blocks you until the user replies)",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -347,7 +347,7 @@ async function dispatchRequest(request: any): Promise<DispatchResult | null> {
             },
             {
               name: "notify_user",
-              description: "Send a notification message to the user via Telegram (no response required)",
+              description: "Send a notification message to the user via Telegram (you will not receive a reply)",
               inputSchema: {
                 type: "object",
                 properties: {
