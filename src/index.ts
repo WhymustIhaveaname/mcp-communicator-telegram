@@ -413,7 +413,7 @@ async function dispatchRequest(request: any): Promise<DispatchResult | null> {
           }
           case 'notify_user': {
             await notifyUser(request.params.arguments);
-            result = { content: [{ type: "text", text: "Notification sent successfully" }] };
+            result = { content: [{ type: "text", text: "Notification sent successfully. This is a one-way channel — you will NOT receive a user reply through this tool. If you need a response, use ask_user instead." }] };
             break;
           }
           case 'send_file': {
