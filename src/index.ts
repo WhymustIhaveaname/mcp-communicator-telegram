@@ -564,10 +564,9 @@ async function startHttpServer(): Promise<{ server: http.Server; port: number }>
 }
 
 const cleanupState = () => {
-  // Only delete state files if we still own them. A leaked / zombie daemon
-  // exiting must not wipe the live daemon's PID/PORT (they may have been
-  // overwritten by a successor). TOCTOU race here is benign: worst case we
-  // skip a cleanup we should have done, ensure_daemon recovers next spawn.
+  // Skip cleanup if PID_FILE no longer names us — a zombie daemon must not
+  // wipe the live successor's state. TOCTOU race here is benign: worst case
+  // ensure_daemon respawns on the next request.
   try {
     const recordedPid = fs.readFileSync(PID_FILE, 'utf8').trim();
     if (recordedPid !== String(process.pid)) return;

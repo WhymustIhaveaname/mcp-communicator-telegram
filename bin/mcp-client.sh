@@ -55,13 +55,6 @@ ensure_daemon() {
       rm -f "$PID_FILE" "$PORT_FILE"
     fi
 
-    # Pre-spawn zombie sweep: any node still running this exact daemon binary
-    # is a leak from a prior spurious spawn (we wouldn't reach here if the
-    # PID-file-recorded daemon were alive). Restricted to our euid so
-    # cross-user processes silently no-op. Belt-and-suspenders for the case
-    # where PID file was lost (e.g. /tmp wipe) while the daemon kept polling.
-    pkill -u "$(id -u)" -TERM -f "$DAEMON_BIN" 2>/dev/null || true
-
     # Close fd 200 for the daemon child so it does not inherit the lock fd
     # from our subshell and keep flock held forever. Close stdin (</dev/null)
     # so the daemon is not pinned to our pipe if CC exits.
@@ -84,14 +77,12 @@ ensure_daemon() {
 }
 
 # Proxy newline-delimited JSON-RPC on stdin to the daemon over HTTP.
-# Re-resolve the daemon (ensure alive, re-read port) per request so a session
-# survives the daemon dying and being respawned on a new port by another
-# wrapper. ensure_daemon is a cheap kill -0 check in the steady state.
+# Re-resolve per request (ensure_daemon is a kill -0 in steady state) so the
+# session survives the daemon dying and being respawned on a new port.
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   ensure_daemon
   PORT=$(cat "$PORT_FILE")
-  [[ -n "$PORT" ]] || { echo "[mcp-client] empty $PORT_FILE after spawn" >&2; continue; }
   reply=$(
     printf '%s' "$line" \
     | curl -sS -X POST "http://127.0.0.1:$PORT/mcp" \
