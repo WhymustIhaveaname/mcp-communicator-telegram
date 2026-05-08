@@ -47,23 +47,19 @@ ensure_daemon() {
   if ! (
     flock -x 200
 
-    # Check whether a daemon is already listening on the port recorded
-    # in PORT_FILE.  An HTTP health check works cross-user, unlike
-    # kill -0 which fails when the daemon is owned by another user.
-    if [[ -f "$PORT_FILE" ]]; then
-      port=$(cat "$PORT_FILE")
-      if curl -sS --max-time 1 -X POST "http://127.0.0.1:$port/mcp" \
-          -H 'Content-Type: application/json' \
-          -d '{"jsonrpc":"2.0","method":"ping","id":"health"}' >/dev/null 2>&1; then
-        exit 0   # daemon alive; nothing to do
-      fi
-      rm -f "$PID_FILE" "$PORT_FILE"
+    # The daemon holds an exclusive flock on PORT_FILE for life.
+    # If we can't acquire it non-blocking, the daemon is alive.
+    # This works cross-user because flock is kernel-enforced.
+    if ! flock -n "$PORT_FILE" -c "true" 2>/dev/null; then
+      exit 0   # daemon alive; nothing to do
     fi
+    # Lock is free — no daemon. Clean up stale files (if any).
+    rm -f "$PID_FILE" "$PORT_FILE"
 
     # Close fd 200 for the daemon child so it does not inherit the lock fd
     # from our subshell and keep flock held forever. Close stdin (</dev/null)
     # so the daemon is not pinned to our pipe if CC exits.
-    nohup node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
+    nohup flock -x "$PORT_FILE" node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
     disown
 
     # Wait up to 5s for the daemon to write its port file.
@@ -82,9 +78,9 @@ ensure_daemon() {
 }
 
 # Proxy newline-delimited JSON-RPC on stdin to the daemon over HTTP.
-# Re-resolve per request (ensure_daemon pings the daemon via HTTP, which
-# works cross-user) so the session survives the daemon dying and being
-# respawned on a new port.
+# Re-resolve per request (ensure_daemon checks the flock on server.port,
+# which works cross-user) so the session survives the daemon dying and
+# being respawned on a new port.
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   ensure_daemon

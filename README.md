@@ -302,3 +302,5 @@ qpd-v
 0.3.0 — First release with the shared HTTP daemon, stdio wrapper (`bin/mcp-client.sh`), per-user state directory, and reply-only question routing.
 
 0.3.1 — State directory keyed by `sha256(TELEGRAM_TOKEN)` only (no `$USER`), mode `2770` group `sudo`, so all sudo members sharing a token share one daemon instead of competing for Telegram's exclusive long poll.
+
+0.3.4 — Singleton detection uses `flock` (kernel-enforced, ownership-agnostic) instead of `kill -0`.

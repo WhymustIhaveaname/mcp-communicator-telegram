@@ -589,37 +589,6 @@ process.on('SIGTERM', shutdown);
 process.on('exit', cleanupState);
 
 async function main() {
-  // Refuse to start if another daemon with the same token is already
-  // listening on the port recorded in PORT_FILE.  This check works
-  // cross-user because it uses HTTP, unlike process.kill(pid, 0).
-  try {
-    const existingPort = fs.readFileSync(PORT_FILE, 'utf8').trim();
-    if (existingPort) {
-      const alive = await new Promise<boolean>((resolve) => {
-        const req = http.request({
-          hostname: HTTP_HOST,
-          port: parseInt(existingPort),
-          path: '/mcp',
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 1000,
-        }, () => resolve(true));
-        req.on('error', () => resolve(false));
-        req.on('timeout', () => { req.destroy(); resolve(false); });
-        req.write(JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 'health' }));
-        req.end();
-      });
-      if (alive) {
-        console.error(
-          `Daemon already running on port ${existingPort}, exiting.`,
-        );
-        process.exit(0);
-      }
-    }
-  } catch {
-    // PORT_FILE doesn't exist or is unreadable — no daemon to conflict with.
-  }
-
   const success = await initializeBot();
   if (!success) {
     console.error('Failed to initialize bot, exiting...');
