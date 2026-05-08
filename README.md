@@ -15,6 +15,12 @@ How it works:
 
 This design eliminates the race condition that occurred when multiple Claude Code sessions competed for the Telegram bot polling lock.
 
+## Singleton invariant
+
+One daemon per bot token. Period.
+
+Detection must be ownership-agnostic: the daemon is a shared resource, and a different user is not a reason to start a second one. Any check that depends on who owns the process (e.g. `kill -0`) is fundamentally wrong.
+
 ## State Directory
 
 The daemon stores its runtime state in `/tmp/mcp-communicator-telegram-<token-hash>/`, where `<token-hash>` is the first 8 hex chars of `sha256(TELEGRAM_TOKEN)`. Keying by token (not by user) means any OS user pointing at a wrapper that resolves the same token reuses the same daemon — Telegram's `getUpdates` is mutually exclusive at the bot-token level, so per-user daemons would compete for the same poll and lose updates. Different bots get different hashes and run side by side.
