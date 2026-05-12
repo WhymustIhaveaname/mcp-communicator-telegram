@@ -187,18 +187,32 @@ async function askUser(params: AskUserParams): Promise<PendingReply> {
 // this MUST run only after the JSON-RPC response is flushed to the wrapper.
 async function reactWithOk(chatId: number, messageId: number): Promise<void> {
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setMessageReaction`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      reaction: [{ type: 'emoji', emoji: '👌' }],
-    }),
+  const body = JSON.stringify({
+    chat_id: chatId,
+    message_id: messageId,
+    reaction: [{ type: 'emoji', emoji: '👌' }],
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '<no body>');
-    throw new Error(`setMessageReaction ${res.status}: ${body}`);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '<no body>');
+        throw new Error(`setMessageReaction ${res.status}: ${text}`);
+      }
+      return; // success
+    } catch (err: any) {
+      if (attempt < 2) {
+        console.error(`👌 attempt ${attempt + 1} failed, retrying in 60s:`, err?.message ?? err);
+        await new Promise(r => setTimeout(r, 60_000));
+      } else {
+        throw err; // last attempt, let caller handle
+      }
+    }
   }
 }
 

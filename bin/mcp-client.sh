@@ -90,7 +90,7 @@ while IFS= read -r line; do
     | curl -sS -X POST "http://127.0.0.1:$PORT/mcp" \
         -H 'Content-Type: application/json' \
         --data-binary @- \
-        --max-time 0
+        --max-time 43200
   ) || {
     echo "[mcp-client] curl failed on request: $line" >&2
     continue
