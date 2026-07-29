@@ -28,6 +28,14 @@ PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"
 LOCK_FILE="$STATE_DIR/spawn.lock"
+# Per-wrapper-process (i.e. per Claude Code session) stdout serialization
+# lock, so concurrently-dispatched requests (see handle_request) can't
+# interleave partial JSON lines on this wrapper's shared stdout. Keyed by our
+# own PID: unique per wrapper instance, no cross-session/cross-user sharing
+# needed since each session only writes to its own stdout.
+STDOUT_LOCK_FILE="$STATE_DIR/stdout-$$.lock"
+cleanup_stdout_lock() { rm -f "$STDOUT_LOCK_FILE"; }
+trap cleanup_stdout_lock EXIT
 
 # State dir keyed only by sha256(TELEGRAM_TOKEN) so any user with the same
 # token shares one daemon (Telegram's getUpdates is mutually exclusive at the
@@ -77,26 +85,49 @@ ensure_daemon() {
   fi
 }
 
-# Proxy newline-delimited JSON-RPC on stdin to the daemon over HTTP.
-# Re-resolve per request (ensure_daemon checks the flock on server.port,
-# which works cross-user) so the session survives the daemon dying and
-# being respawned on a new port.
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
+# Handle one JSON-RPC request line: forward to the daemon over HTTP and
+# print the reply. Runs in its own backgrounded subshell (see main loop)
+# so a slow call (e.g. ask_user blocked on a human reply for hours) never
+# delays any other request queued behind it on the same stdin — each line
+# gets its own curl in flight concurrently.
+handle_request() {
+  local line="$1"
   ensure_daemon
-  PORT=$(cat "$PORT_FILE")
+  local port
+  port=$(cat "$PORT_FILE")
+  local reply
   reply=$(
     printf '%s' "$line" \
-    | curl -sS -X POST "http://127.0.0.1:$PORT/mcp" \
+    | curl -sS -X POST "http://127.0.0.1:$port/mcp" \
         -H 'Content-Type: application/json' \
         --data-binary @- \
         --max-time 43200
   ) || {
     echo "[mcp-client] curl failed on request: $line" >&2
-    continue
+    return
   }
   # Empty reply means the request was a JSON-RPC notification — no response.
   if [[ -n "$reply" ]]; then
-    printf '%s\n' "$reply"
+    # flock scopes the write so two concurrently-finishing requests can't
+    # interleave their JSON onto stdout mid-line.
+    {
+      flock 201
+      printf '%s\n' "$reply"
+    } 201>"$STDOUT_LOCK_FILE"
   fi
+}
+
+# Proxy newline-delimited JSON-RPC on stdin to the daemon over HTTP.
+# Re-resolve per request (ensure_daemon checks the flock on server.port,
+# which works cross-user) so the session survives the daemon dying and
+# being respawned on a new port. Each line is dispatched to a backgrounded
+# handle_request so unrelated requests (e.g. notify_user) never wait behind
+# a still-pending one (e.g. an unanswered ask_user) on this same connection.
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  handle_request "$line" &
 done
+# Don't let the script (and thus this process) exit while any handle_request
+# is still in flight — stdin closing (session end) would otherwise kill
+# still-running background jobs before they ever get to print their reply.
+wait
