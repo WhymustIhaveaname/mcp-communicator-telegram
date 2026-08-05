@@ -258,6 +258,7 @@ Other common issues:
 
 - **Daemon not starting**: Check `/tmp/mcp-communicator-telegram-<token-hash>/server.log` for error output.
 - **Bot not responding to replies**: Ensure `CHAT_ID` in `.env` matches the chat where you are replying. The bot only accepts messages from the configured chat ID.
+- **Group upgraded to a supergroup**: Telegram assigns a new chat ID. The daemon follows `migrate_to_chat_id` and retries the first outgoing message automatically; update `CHAT_ID` in `.env` to the logged replacement ID so incoming replies work immediately after future restarts.
 - **Port range exhausted**: All ports 13579–13588 are in use. Either free a port or set `MCP_HTTP_PORT` to an available range start.
 
 ## Development

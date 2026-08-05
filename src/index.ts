@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import * as dns from 'dns';
 import archiver from 'archiver';
 import ignore from 'ignore';
+import { migratedChatId, telegramErrorMessage } from './telegram-error';
 
 // api.telegram.org resolves to both A and AAAA records. When the host's
 // IPv6 route is dead but DNS still hands out the AAAA first (default OS
@@ -50,7 +51,7 @@ const STATE_DIR = path.join(
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
 
-const validatedChatId = CHAT_ID as string;
+let validatedChatId = CHAT_ID as string;
 let bot: TelegramBot | null = null;
 
 interface PendingReply {
@@ -134,6 +135,29 @@ interface NotifyUserParams {
   message: string;
 }
 
+async function withChatMigrationRetry<T>(
+  operation: (chatId: TelegramBot.ChatId) => Promise<T>,
+): Promise<T> {
+  const attemptedChatId = validatedChatId;
+  try {
+    return await operation(attemptedChatId);
+  } catch (error: unknown) {
+    const replacementChatId = migratedChatId(error);
+    if (!replacementChatId || replacementChatId === attemptedChatId) {
+      throw error;
+    }
+
+    if (validatedChatId !== replacementChatId) {
+      validatedChatId = replacementChatId;
+      console.error(
+        `Telegram group migrated; switched active chat ID to ${replacementChatId}. ` +
+        'Update CHAT_ID in .env to persist it across daemon restarts.',
+      );
+    }
+    return await operation(replacementChatId);
+  }
+}
+
 async function notifyUser(params: NotifyUserParams): Promise<void> {
   if (!bot) {
     throw new Error('Bot not initialized');
@@ -142,11 +166,12 @@ async function notifyUser(params: NotifyUserParams): Promise<void> {
   const { message } = params;
 
   try {
-    await bot.sendMessage(parseInt(validatedChatId), message);
+    await withChatMigrationRetry(chatId => bot!.sendMessage(chatId, message));
     console.error('Notification sent successfully');
-  } catch (error: any) {
-    console.error('Error in notifyUser:', error);
-    throw new Error(`Failed to send notification: ${error.message}`);
+  } catch (error: unknown) {
+    const message = telegramErrorMessage(error);
+    console.error('Error in notifyUser:', message);
+    throw new Error(`Failed to send notification: ${message}`);
   }
 }
 
@@ -161,12 +186,14 @@ async function askUser(params: AskUserParams): Promise<PendingReply> {
   console.error('Asking question with ID:', questionId);
 
   try {
-    await bot.sendMessage(parseInt(validatedChatId), `#${questionId}\n${question}`, {
-      reply_markup: {
-        force_reply: true,
-        selective: true
-      }
-    });
+    await withChatMigrationRetry(chatId =>
+      bot!.sendMessage(chatId, `#${questionId}\n${question}`, {
+        reply_markup: {
+          force_reply: true,
+          selective: true
+        }
+      }),
+    );
     console.error('Question sent successfully');
 
     const reply = await new Promise<PendingReply>((resolve) => {
@@ -175,9 +202,10 @@ async function askUser(params: AskUserParams): Promise<PendingReply> {
 
     console.error('Received response:', reply.text);
     return reply;
-  } catch (error: any) {
-    console.error('Error in askUser:', error);
-    throw new Error(`Failed to get response: ${error.message}`);
+  } catch (error: unknown) {
+    const message = telegramErrorMessage(error);
+    console.error('Error in askUser:', message);
+    throw new Error(`Failed to get response: ${message}`);
   }
 }
 
@@ -224,15 +252,18 @@ async function sendFile(params: { filePath: string }): Promise<void> {
   const { filePath } = params;
 
   try {
-    const fileStream = fs.createReadStream(filePath);
-    await bot.sendDocument(parseInt(validatedChatId), fileStream, {}, {
-      contentType: 'application/octet-stream',
-      filename: path.basename(filePath)
+    await withChatMigrationRetry(chatId => {
+      const fileStream = fs.createReadStream(filePath);
+      return bot!.sendDocument(chatId, fileStream, {}, {
+        contentType: 'application/octet-stream',
+        filename: path.basename(filePath)
+      });
     });
     console.error('File sent successfully');
-  } catch (error: any) {
-    console.error('Error in sendFile:', error);
-    throw new Error(`Failed to send file: ${error.message}`);
+  } catch (error: unknown) {
+    const message = telegramErrorMessage(error);
+    console.error('Error in sendFile:', message);
+    throw new Error(`Failed to send file: ${message}`);
   }
 }
 
