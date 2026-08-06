@@ -104,13 +104,13 @@ Add the server to your `.mcp.json` (or equivalent MCP settings file), pointing t
 
 Replace `/path/to/mcp-communicator-telegram` with the absolute path to your checkout.
 
-The wrapper reads `TELEGRAM_TOKEN` and `CHAT_ID` from the `.env` file in the project root, so no additional `env` block is needed in most setups.
+The wrapper reads configuration from the `.env` file in the project root, so no additional `env` block is needed in most setups. `MAX_PENDING_ASK_USER_PER_SESSION` limits unanswered `ask_user` calls separately for each session. It defaults to unlimited; set it to `1` to require a reply before that session can ask again. Sessions started with an older wrapper remain unlimited until they reconnect and receive a session identity.
 
 ## Available Tools
 
 ### ask_user
 
-Asks a question to the user via Telegram and waits for their response.
+Asks a question to the user via Telegram and waits for their response. If this session has reached its configured unanswered-question limit, the call fails immediately without sending another Telegram message.
 
 **Important:** Only Telegram messages sent as a **Reply** to the bot's question message will resolve the pending `ask_user` call. Plain (non-reply) messages sent to the bot are logged and ignored. This prevents accidental responses from being mistaken for answers.
 

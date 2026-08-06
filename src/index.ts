@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import * as dns from 'dns';
 import archiver from 'archiver';
 import ignore from 'ignore';
+import { PendingAskBudget, parsePendingAskLimit } from './pending-ask-budget';
 import { migratedChatId, telegramErrorMessage } from './telegram-error';
 
 // api.telegram.org resolves to both A and AAAA records. When the host's
@@ -28,6 +29,9 @@ const CHAT_ID = process.env.CHAT_ID;
 const HTTP_PORT_START = parseInt(process.env.MCP_HTTP_PORT ?? '13579', 10);
 const HTTP_PORT_TRIES = 10;
 const HTTP_HOST = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
+const MAX_PENDING_ASK_USER_PER_SESSION = parsePendingAskLimit(
+  process.env.MAX_PENDING_ASK_USER_PER_SESSION,
+);
 
 if (!TELEGRAM_TOKEN || !CHAT_ID) {
   throw new Error('TELEGRAM_TOKEN and CHAT_ID are required in .env file');
@@ -50,6 +54,7 @@ const STATE_DIR = path.join(
 );
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
+const pendingAskBudget = new PendingAskBudget(MAX_PENDING_ASK_USER_PER_SESSION);
 
 let validatedChatId = CHAT_ID as string;
 let bot: TelegramBot | null = null;
@@ -175,13 +180,20 @@ async function notifyUser(params: NotifyUserParams): Promise<void> {
   }
 }
 
-async function askUser(params: AskUserParams): Promise<PendingReply> {
+async function askUser(
+  params: AskUserParams,
+  sessionId: string | null,
+): Promise<PendingReply> {
   if (!bot) {
     throw new Error('Bot not initialized');
   }
 
   const { question } = params;
   const questionId = Math.random().toString(36).substring(7);
+  const releaseBudget = pendingAskBudget.reserve(sessionId);
+  const replyPromise = new Promise<PendingReply>((resolve) => {
+    pendingQuestions.set(questionId, resolve);
+  });
 
   console.error('Asking question with ID:', questionId);
 
@@ -195,17 +207,16 @@ async function askUser(params: AskUserParams): Promise<PendingReply> {
       }),
     );
     console.error('Question sent successfully');
-
-    const reply = await new Promise<PendingReply>((resolve) => {
-      pendingQuestions.set(questionId, resolve);
-    });
-
+    const reply = await replyPromise;
     console.error('Received response:', reply.text);
     return reply;
   } catch (error: unknown) {
     const message = telegramErrorMessage(error);
     console.error('Error in askUser:', message);
     throw new Error(`Failed to get response: ${message}`);
+  } finally {
+    pendingQuestions.delete(questionId);
+    releaseBudget();
   }
 }
 
@@ -340,7 +351,10 @@ type DispatchResult = {
 };
 
 // JSON-RPC dispatcher: returns the response object, or null for notifications.
-async function dispatchRequest(request: any): Promise<DispatchResult | null> {
+async function dispatchRequest(
+  request: any,
+  sessionId: string | null,
+): Promise<DispatchResult | null> {
   // JSON-RPC notifications have no `id` field and MUST NOT receive a response.
   if (!('id' in request)) {
     return null;
@@ -443,7 +457,7 @@ async function dispatchRequest(request: any): Promise<DispatchResult | null> {
         let postCommit: (() => Promise<void>) | undefined;
         switch (request.params.name) {
           case 'ask_user': {
-            const reply = await askUser(request.params.arguments);
+            const reply = await askUser(request.params.arguments, sessionId);
             result = { content: [{ type: "text", text: reply.text }] };
             // Schedule the 👌 reaction for AFTER the response is flushed —
             // see DispatchResult docstring and reactWithOk's contract.
@@ -552,7 +566,12 @@ async function startHttpServer(): Promise<{ server: http.Server; port: number }>
       }
 
       try {
-        const dispatched = await dispatchRequest(request);
+        const rawSessionId = req.headers['x-mcp-session-id'];
+        const sessionId = (
+          typeof rawSessionId === 'string' &&
+          /^[A-Za-z0-9._:-]{1,128}$/.test(rawSessionId)
+        ) ? rawSessionId : null;
+        const dispatched = await dispatchRequest(request, sessionId);
         if (dispatched === null) {
           res.writeHead(202);
           res.end();
@@ -640,6 +659,12 @@ async function main() {
     process.exit(1);
   }
   const { port } = await startHttpServer();
+  console.error(
+    'Maximum unanswered ask_user requests per session:',
+    MAX_PENDING_ASK_USER_PER_SESSION === Number.POSITIVE_INFINITY
+      ? 'unlimited'
+      : MAX_PENDING_ASK_USER_PER_SESSION,
+  );
 
   // mode 0o2770 = setgid + group rwx so other sudo members can share the dir
   // (see STATE_DIR keying comment). When the wrapper spawned us, it already

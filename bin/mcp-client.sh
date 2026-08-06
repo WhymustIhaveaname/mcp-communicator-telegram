@@ -11,6 +11,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_BIN="$SCRIPT_DIR/../build/index.js"
 ENV_FILE="$SCRIPT_DIR/../.env"
 
+# One wrapper process belongs to exactly one MCP client session. Give every
+# wrapper a stable identity so the shared daemon can apply per-session limits.
+if [[ -n "${MCP_SESSION_ID:-}" ]]; then
+  SESSION_ID="$MCP_SESSION_ID"
+elif [[ -r /proc/sys/kernel/random/uuid ]]; then
+  IFS= read -r SESSION_ID < /proc/sys/kernel/random/uuid
+else
+  SESSION_ID="wrapper-$$-$(date +%s%N)"
+fi
+
 # Match the daemon's STATE_DIR keying: sha256(TELEGRAM_TOKEN) suffix lets
 # different bots coexist and identical bots (any chat id) share one daemon.
 INSTANCE_HASH=$(
@@ -100,6 +110,7 @@ handle_request() {
     printf '%s' "$line" \
     | curl -sS -X POST "http://127.0.0.1:$port/mcp" \
         -H 'Content-Type: application/json' \
+        -H "X-MCP-Session-ID: $SESSION_ID" \
         --data-binary @- \
         --max-time 43200
   ) || {
