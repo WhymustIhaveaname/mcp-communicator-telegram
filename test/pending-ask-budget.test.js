@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  DEFAULT_ASK_USER_TIMEOUT_MS,
   PendingAskBudget,
+  parseAskTimeoutMs,
   parsePendingAskLimit,
 } = require('../build/pending-ask-budget.js');
 
@@ -62,4 +64,15 @@ test('release is idempotent and makes the slot reusable', () => {
   const releaseAgain = budget.reserve('session-a');
   assert.equal(budget.pending('session-a'), 1);
   releaseAgain();
+});
+
+test('ask_user backstop timeout defaults on and can be disabled', () => {
+  assert.equal(parseAskTimeoutMs(undefined), DEFAULT_ASK_USER_TIMEOUT_MS);
+  assert.equal(parseAskTimeoutMs(''), DEFAULT_ASK_USER_TIMEOUT_MS);
+  assert.equal(parseAskTimeoutMs('0'), 0);
+  assert.equal(parseAskTimeoutMs('off'), 0);
+  assert.equal(parseAskTimeoutMs('none'), 0);
+  assert.equal(parseAskTimeoutMs('1500'), 1500);
+  assert.throws(() => parseAskTimeoutMs('-1'), /nonnegative integer/);
+  assert.throws(() => parseAskTimeoutMs('12h'), /nonnegative integer/);
 });

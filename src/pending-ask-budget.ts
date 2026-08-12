@@ -17,6 +17,32 @@ export function parsePendingAskLimit(raw: string | undefined): number {
   return parsed;
 }
 
+export const DEFAULT_ASK_USER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Backstop TTL for one pending ask_user, in milliseconds. `0`/`off`/`none`
+ * disables it; omitting it takes DEFAULT_ASK_USER_TIMEOUT_MS.
+ */
+export function parseAskTimeoutMs(raw: string | undefined): number {
+  const value = raw?.trim();
+  if (value === undefined || value === '') {
+    return DEFAULT_ASK_USER_TIMEOUT_MS;
+  }
+  if (/^(?:0|off|none|disabled)$/i.test(value)) {
+    return 0;
+  }
+  if (!/^\d+$/.test(value)) {
+    throw new Error(
+      'ASK_USER_TIMEOUT_MS must be a nonnegative integer (ms), or off/none to disable',
+    );
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error('ASK_USER_TIMEOUT_MS exceeds the safe integer range');
+  }
+  return parsed;
+}
+
 export class PendingAskBudget {
   private readonly counts = new Map<string, number>();
 

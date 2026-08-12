@@ -106,6 +106,8 @@ Replace `/path/to/mcp-communicator-telegram` with the absolute path to your chec
 
 The wrapper reads configuration from the `.env` file in the project root, so no additional `env` block is needed in most setups. `MAX_PENDING_ASK_USER_PER_SESSION` limits unanswered `ask_user` calls separately for each session. It defaults to unlimited; set it to `1` to require a reply before that session can ask again. Sessions started with an older wrapper remain unlimited until they reconnect and receive a session identity.
 
+A session's slot is returned as soon as **any** of these happens: the user replies, the MCP client disconnects, the client sends `notifications/cancelled`, or the backstop `ASK_USER_TIMEOUT_MS` expires (default 24h; `off`/`none`/`0` disables). The last three exist because a client-side abort is invisible to the daemon by default — an MCP client that gives up on a blocked `ask_user` after its own timeout used to leave the slot reserved for the daemon's entire lifetime, permanently blocking that session from asking again.
+
 ## Available Tools
 
 ### ask_user

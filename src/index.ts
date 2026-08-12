@@ -9,7 +9,7 @@ import * as crypto from 'crypto';
 import * as dns from 'dns';
 import archiver from 'archiver';
 import ignore from 'ignore';
-import { PendingAskBudget, parsePendingAskLimit } from './pending-ask-budget';
+import { PendingAskBudget, parseAskTimeoutMs, parsePendingAskLimit } from './pending-ask-budget';
 import { migratedChatId, telegramErrorMessage } from './telegram-error';
 
 // api.telegram.org resolves to both A and AAAA records. When the host's
@@ -32,6 +32,10 @@ const HTTP_HOST = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
 const MAX_PENDING_ASK_USER_PER_SESSION = parsePendingAskLimit(
   process.env.MAX_PENDING_ASK_USER_PER_SESSION,
 );
+// Backstop for the budget slot: if neither a client disconnect nor an explicit
+// notifications/cancelled reaches us, give up on the question after this long
+// so the slot cannot be held for the daemon's whole lifetime. 0 disables it.
+const ASK_USER_TIMEOUT_MS = parseAskTimeoutMs(process.env.ASK_USER_TIMEOUT_MS);
 
 if (!TELEGRAM_TOKEN || !CHAT_ID) {
   throw new Error('TELEGRAM_TOKEN and CHAT_ID are required in .env file');
@@ -48,10 +52,13 @@ const instanceHash = crypto
   .update(TELEGRAM_TOKEN)
   .digest('hex')
   .slice(0, 8);
-const STATE_DIR = path.join(
-  '/tmp',
-  `mcp-communicator-telegram-${instanceHash}`,
-);
+// Keyed by the token hash so different bots coexist and identical bots share
+// one daemon. MCP_STATE_DIR overrides it so a throwaway daemon (a test, a
+// bisect) cannot clobber the pid/port files the wrappers use to find the live
+// one — writing this dir is how a scratch process silently steals traffic.
+const STATE_DIR = process.env.MCP_STATE_DIR?.trim()
+  ? path.resolve(process.env.MCP_STATE_DIR.trim())
+  : path.join('/tmp', `mcp-communicator-telegram-${instanceHash}`);
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
 const pendingAskBudget = new PendingAskBudget(MAX_PENDING_ASK_USER_PER_SESSION);
@@ -180,9 +187,24 @@ async function notifyUser(params: NotifyUserParams): Promise<void> {
   }
 }
 
+// A pending ask_user is only ever settled by a Telegram reply. Everything
+// else that can end the call — the MCP client hanging up, an explicit
+// notifications/cancelled, or the server-side TTL — has to be able to reject
+// the wait, because the budget slot is released in askUser's `finally`. If we
+// keep awaiting a promise nobody will resolve, the slot leaks for the lifetime
+// of the daemon (observed: a client-side timeout at 12h left a session
+// permanently unable to call ask_user again).
+class AskAbortedError extends Error {
+  constructor(readonly kind: 'client_gone' | 'cancelled' | 'timeout', message: string) {
+    super(message);
+    this.name = 'AskAbortedError';
+  }
+}
+
 async function askUser(
   params: AskUserParams,
   sessionId: string | null,
+  signal?: AbortSignal,
 ): Promise<PendingReply> {
   if (!bot) {
     throw new Error('Bot not initialized');
@@ -191,8 +213,32 @@ async function askUser(
   const { question } = params;
   const questionId = Math.random().toString(36).substring(7);
   const releaseBudget = pendingAskBudget.reserve(sessionId);
-  const replyPromise = new Promise<PendingReply>((resolve) => {
+
+  let onAbort: (() => void) | undefined;
+  let ttlTimer: NodeJS.Timeout | undefined;
+
+  const replyPromise = new Promise<PendingReply>((resolve, reject) => {
     pendingQuestions.set(questionId, resolve);
+
+    if (signal) {
+      if (signal.aborted) {
+        reject(abortReason(signal));
+      } else {
+        onAbort = () => reject(abortReason(signal));
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+
+    if (ASK_USER_TIMEOUT_MS > 0) {
+      ttlTimer = setTimeout(() => {
+        reject(new AskAbortedError(
+          'timeout',
+          `no Telegram reply within ${ASK_USER_TIMEOUT_MS} ms`,
+        ));
+      }, ASK_USER_TIMEOUT_MS);
+      // Never hold the event loop open just to time out a question.
+      ttlTimer.unref?.();
+    }
   });
 
   console.error('Asking question with ID:', questionId);
@@ -211,13 +257,30 @@ async function askUser(
     console.error('Received response:', reply.text);
     return reply;
   } catch (error: unknown) {
+    if (error instanceof AskAbortedError) {
+      // Abandoned, not failed: say so plainly in the log so a leaked slot is
+      // never the silent explanation for a later "ask_user blocked".
+      console.error(
+        `ask_user ${questionId} abandoned (${error.kind}): ${error.message}; ` +
+        'releasing the session budget slot',
+      );
+      throw error;
+    }
     const message = telegramErrorMessage(error);
     console.error('Error in askUser:', message);
     throw new Error(`Failed to get response: ${message}`);
   } finally {
+    if (ttlTimer) clearTimeout(ttlTimer);
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
     pendingQuestions.delete(questionId);
     releaseBudget();
   }
+}
+
+function abortReason(signal: AbortSignal): AskAbortedError {
+  const reason: any = (signal as any).reason;
+  if (reason instanceof AskAbortedError) return reason;
+  return new AskAbortedError('client_gone', 'MCP client closed the connection');
 }
 
 // Acknowledge that the user's reply made it back to Claude Code by reacting
@@ -350,13 +413,40 @@ type DispatchResult = {
   postCommit?: () => Promise<void>;
 };
 
+// In-flight cancellable requests, keyed by the JSON-RPC id the client used.
+// Only ask_user needs this today; it is the one handler that can block for
+// hours waiting on a human.
+const inFlightAborts = new Map<string, AbortController>();
+
+function abortInFlight(rawId: unknown, err: AskAbortedError): boolean {
+  if (rawId === undefined || rawId === null) return false;
+  const controller = inFlightAborts.get(String(rawId));
+  if (!controller) return false;
+  controller.abort(err);
+  return true;
+}
+
 // JSON-RPC dispatcher: returns the response object, or null for notifications.
 async function dispatchRequest(
   request: any,
   sessionId: string | null,
+  signal?: AbortSignal,
 ): Promise<DispatchResult | null> {
   // JSON-RPC notifications have no `id` field and MUST NOT receive a response.
   if (!('id' in request)) {
+    // ...but a cancellation still has to reach the handler it cancels,
+    // otherwise the blocked ask_user keeps its budget slot forever.
+    if (request?.method === 'notifications/cancelled') {
+      const requestId = request?.params?.requestId;
+      const reason = typeof request?.params?.reason === 'string'
+        ? request.params.reason
+        : 'client cancelled the request';
+      const hit = abortInFlight(requestId, new AskAbortedError('cancelled', reason));
+      console.error(
+        `notifications/cancelled for request ${String(requestId)}: ` +
+        (hit ? 'aborted in-flight handler' : 'no in-flight handler with that id'),
+      );
+    }
     return null;
   }
 
@@ -457,7 +547,7 @@ async function dispatchRequest(
         let postCommit: (() => Promise<void>) | undefined;
         switch (request.params.name) {
           case 'ask_user': {
-            const reply = await askUser(request.params.arguments, sessionId);
+            const reply = await askUser(request.params.arguments, sessionId, signal);
             result = { content: [{ type: "text", text: reply.text }] };
             // Schedule the 👌 reaction for AFTER the response is flushed —
             // see DispatchResult docstring and reactWithOk's contract.
@@ -571,10 +661,43 @@ async function startHttpServer(): Promise<{ server: http.Server; port: number }>
           typeof rawSessionId === 'string' &&
           /^[A-Za-z0-9._:-]{1,128}$/.test(rawSessionId)
         ) ? rawSessionId : null;
-        const dispatched = await dispatchRequest(request, sessionId);
+
+        // If the wrapper (and therefore the MCP client) goes away while a
+        // handler is still blocked, nothing will ever answer it. Turn that
+        // into an abort so the handler's `finally` runs and releases whatever
+        // it reserved. Without this a client-side timeout permanently burns
+        // the session's ask_user budget.
+        const controller = new AbortController();
+        const requestKey = 'id' in request ? String(request.id) : null;
+        if (requestKey !== null) inFlightAborts.set(requestKey, controller);
+        let settled = false;
+        const onClientGone = () => {
+          if (settled || controller.signal.aborted) return;
+          controller.abort(new AskAbortedError(
+            'client_gone',
+            'MCP client closed the connection before the reply arrived',
+          ));
+        };
+        res.on('close', onClientGone);
+
+        let dispatched: DispatchResult | null;
+        try {
+          dispatched = await dispatchRequest(request, sessionId, controller.signal);
+        } finally {
+          settled = true;
+          res.off('close', onClientGone);
+          if (requestKey !== null) inFlightAborts.delete(requestKey);
+        }
+
         if (dispatched === null) {
           res.writeHead(202);
           res.end();
+        } else if (res.writableEnded || res.destroyed) {
+          // Client hung up; there is nobody to receive this. Don't crash on a
+          // write-after-end, just note that the work was thrown away.
+          console.error(
+            `Dropping response for request ${String(request?.id)}: client already gone`,
+          );
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           // res.end(data, cb): cb fires once the body is flushed to the OS
@@ -664,6 +787,10 @@ async function main() {
     MAX_PENDING_ASK_USER_PER_SESSION === Number.POSITIVE_INFINITY
       ? 'unlimited'
       : MAX_PENDING_ASK_USER_PER_SESSION,
+  );
+  console.error(
+    'ask_user backstop timeout:',
+    ASK_USER_TIMEOUT_MS > 0 ? `${ASK_USER_TIMEOUT_MS} ms` : 'disabled',
   );
 
   // mode 0o2770 = setgid + group rwx so other sudo members can share the dir
