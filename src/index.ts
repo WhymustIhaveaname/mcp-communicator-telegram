@@ -10,6 +10,7 @@ import * as dns from 'dns';
 import archiver from 'archiver';
 import ignore from 'ignore';
 import { PendingAskBudget, parseAskTimeoutMs, parsePendingAskLimit } from './pending-ask-budget';
+import { createPollingWatchdog } from './polling-watchdog';
 import { migratedChatId, telegramErrorMessage } from './telegram-error';
 
 // api.telegram.org resolves to both A and AAAA records. When the host's
@@ -36,6 +37,17 @@ const MAX_PENDING_ASK_USER_PER_SESSION = parsePendingAskLimit(
 // notifications/cancelled reaches us, give up on the question after this long
 // so the slot cannot be held for the daemon's whole lifetime. 0 disables it.
 const ASK_USER_TIMEOUT_MS = parseAskTimeoutMs(process.env.ASK_USER_TIMEOUT_MS);
+
+// Long-poll window we ask Telegram to hold getUpdates open for, in seconds.
+// The library's default is 10; a longer hold means fewer round trips and,
+// more usefully here, a predictable upper bound on how long a healthy poll
+// may legitimately look idle.
+const POLLING_TIMEOUT_S = 30;
+// If no getUpdates call has settled for this long, the poll loop is wedged
+// (see restartWedgedPolling). Must exceed POLLING_TIMEOUT_S by enough slack
+// that a healthy long poll plus a slow round trip never trips it.
+const POLLING_STALL_MS = (POLLING_TIMEOUT_S + 60) * 1000;
+const POLLING_WATCHDOG_INTERVAL_MS = 15 * 1000;
 
 if (!TELEGRAM_TOKEN || !CHAT_ID) {
   throw new Error('TELEGRAM_TOKEN and CHAT_ID are required in .env file');
@@ -73,12 +85,18 @@ interface PendingReply {
 }
 const pendingQuestions = new Map<string, (reply: PendingReply) => void>();
 
+
 async function initializeBot() {
   try {
     bot = new TelegramBot(TELEGRAM_TOKEN!, {
-      polling: true,
+      polling: { params: { timeout: POLLING_TIMEOUT_S } },
       filepath: false
     });
+    // The poll loop can wedge silently on a dead socket; see polling-watchdog.
+    createPollingWatchdog(bot, {
+      stallMs: POLLING_STALL_MS,
+      intervalMs: POLLING_WATCHDOG_INTERVAL_MS,
+    }).start();
 
     const handleMessage = (msg: TelegramBot.Message) => {
       console.error('Received message:', {
