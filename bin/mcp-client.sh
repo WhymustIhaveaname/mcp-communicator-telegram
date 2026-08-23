@@ -38,6 +38,13 @@ PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
 LOG_FILE="$STATE_DIR/server.log"
 LOCK_FILE="$STATE_DIR/spawn.lock"
+# Daemon lifetime lock. MUST be a dedicated file that nothing ever unlinks:
+# flock binds to the inode, not the path, so deleting the locked file leaves
+# the live daemon holding an orphaned lock while the path looks free. That
+# turned the liveness probe below into a permanent false "no daemon" and let
+# a second daemon start, and two daemons polling one bot token silently split
+# incoming replies between them. server.pid / server.port are data only.
+DAEMON_LOCK_FILE="$STATE_DIR/daemon.lock"
 # Per-wrapper-process (i.e. per Claude Code session) stdout serialization
 # lock, so concurrently-dispatched requests (see handle_request) can't
 # interleave partial JSON lines on this wrapper's shared stdout. Keyed by our
@@ -65,19 +72,25 @@ ensure_daemon() {
   if ! (
     flock -x 200
 
-    # The daemon holds an exclusive flock on PORT_FILE for life.
+    # The daemon holds an exclusive flock on DAEMON_LOCK_FILE for life.
     # If we can't acquire it non-blocking, the daemon is alive.
     # This works cross-user because flock is kernel-enforced.
-    if ! flock -n "$PORT_FILE" -c "true" 2>/dev/null; then
+    # Create the lock file with >> (never truncates, never changes the inode)
+    # so an existing lock holder keeps excluding us.
+    : >> "$DAEMON_LOCK_FILE" 2>/dev/null || true
+    if ! flock -n "$DAEMON_LOCK_FILE" -c "true" 2>/dev/null; then
       exit 0   # daemon alive; nothing to do
     fi
-    # Lock is free — no daemon. Clean up stale files (if any).
+    # Lock is free — no daemon. Clean up stale data files (never the lock).
     rm -f "$PID_FILE" "$PORT_FILE"
 
     # Close fd 200 for the daemon child so it does not inherit the lock fd
     # from our subshell and keep flock held forever. Close stdin (</dev/null)
     # so the daemon is not pinned to our pipe if CC exits.
-    nohup flock -x "$PORT_FILE" node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
+    # MCP_DAEMON_LOCK lets the daemon self-check that the inode it holds is
+    # still the one at this path and exit if it has been orphaned anyway.
+    MCP_DAEMON_LOCK="$DAEMON_LOCK_FILE" \
+      nohup flock -x "$DAEMON_LOCK_FILE" node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
     disown
 
     # Wait up to 5s for the daemon to write its port file.

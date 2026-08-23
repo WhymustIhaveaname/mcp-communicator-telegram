@@ -73,6 +73,14 @@ const STATE_DIR = process.env.MCP_STATE_DIR?.trim()
   : path.join('/tmp', `mcp-communicator-telegram-${instanceHash}`);
 const PID_FILE = path.join(STATE_DIR, 'server.pid');
 const PORT_FILE = path.join(STATE_DIR, 'server.port');
+// Path of the lifetime flock the wrapper took on our behalf. flock binds to
+// the inode: if anything unlinks or replaces this path, our lock keeps being
+// held but stops excluding anyone, and a second daemon can start. Two daemons
+// on one bot token both call getUpdates and Telegram hands each reply to
+// whichever wins the race, so a reply can land in a daemon that never asked
+// the question and is dropped. We cannot stop the unlink, so we detect it.
+const DAEMON_LOCK_FILE = process.env.MCP_DAEMON_LOCK?.trim() || '';
+const LOCK_CHECK_INTERVAL_MS = Number(process.env.MCP_LOCK_CHECK_INTERVAL_MS ?? 30_000);
 const pendingAskBudget = new PendingAskBudget(MAX_PENDING_ASK_USER_PER_SESSION);
 
 let validatedChatId = CHAT_ID as string;
@@ -793,6 +801,46 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('exit', cleanupState);
 
+// Backstop for an orphaned lifetime lock (see DAEMON_LOCK_FILE). If the inode
+// we locked is no longer the one at that path, our exclusion is void and a
+// successor daemon either already exists or may start at any moment. Being the
+// stale one, we must leave: staying would keep stealing getUpdates batches and
+// dropping replies the successor is waiting for. Only the orphaned daemon
+// exits — the successor's inode matches, so it stays.
+const startLockWatch = () => {
+  if (!DAEMON_LOCK_FILE || LOCK_CHECK_INTERVAL_MS <= 0) return;
+  let held: { dev: number; ino: number };
+  try {
+    const st = fs.statSync(DAEMON_LOCK_FILE);
+    held = { dev: st.dev, ino: st.ino };
+  } catch (error) {
+    console.error('Lock watch disabled; cannot stat lock file:', DAEMON_LOCK_FILE, error);
+    return;
+  }
+  console.error(`Lock watch armed: ${DAEMON_LOCK_FILE} dev=${held.dev} ino=${held.ino}`);
+  const timer = setInterval(() => {
+    let now: fs.Stats;
+    try {
+      now = fs.statSync(DAEMON_LOCK_FILE);
+    } catch {
+      // Path is gone: our lock excludes nobody. A successor cannot even be
+      // detected from here, so treat it as orphaned and step down.
+      console.error(`Lifetime lock ${DAEMON_LOCK_FILE} was removed; this daemon is orphaned, exiting.`);
+      shutdown();
+      return;
+    }
+    if (now.dev !== held.dev || now.ino !== held.ino) {
+      console.error(
+        `Lifetime lock ${DAEMON_LOCK_FILE} was replaced ` +
+          `(dev/ino ${held.dev}/${held.ino} -> ${now.dev}/${now.ino}); ` +
+          'this daemon is orphaned, exiting.',
+      );
+      shutdown();
+    }
+  }, LOCK_CHECK_INTERVAL_MS);
+  timer.unref();
+};
+
 async function main() {
   const success = await initializeBot();
   if (!success) {
@@ -819,6 +867,7 @@ async function main() {
   fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o660 });
   fs.writeFileSync(PORT_FILE, `${port}\n`, { mode: 0o660 });
   console.error(`State recorded: pid=${process.pid} port=${port} in ${STATE_DIR}`);
+  startLockWatch();
 }
 
 main().catch(error => {
