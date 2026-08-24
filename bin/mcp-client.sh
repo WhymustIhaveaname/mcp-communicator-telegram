@@ -82,15 +82,24 @@ ensure_daemon() {
       exit 0   # daemon alive; nothing to do
     fi
     # Lock is free — no daemon. Clean up stale data files (never the lock).
-    rm -f "$PID_FILE" "$PORT_FILE"
+    # PORT_FILE is truncated, not unlinked: pre-a828310 clients still treat an
+    # flock on it as "daemon alive", and unlinking it would orphan that lock and
+    # let them spawn a second daemon on the same bot token. Two daemons poll the
+    # same getUpdates stream, so a reply can land on the process that does not
+    # hold the pending question and is then dropped ("Pending questions: []").
+    rm -f "$PID_FILE"
+    : > "$PORT_FILE" 2>/dev/null || true
 
     # Close fd 200 for the daemon child so it does not inherit the lock fd
     # from our subshell and keep flock held forever. Close stdin (</dev/null)
     # so the daemon is not pinned to our pipe if CC exits.
     # MCP_DAEMON_LOCK lets the daemon self-check that the inode it holds is
     # still the one at this path and exit if it has been orphaned anyway.
+    # Hold BOTH singleton locks for life: DAEMON_LOCK_FILE is the post-a828310
+    # convention, PORT_FILE the pre-a828310 one. A client running either script
+    # version must see the daemon as alive, or it spawns a duplicate.
     MCP_DAEMON_LOCK="$DAEMON_LOCK_FILE" \
-      nohup flock -x "$DAEMON_LOCK_FILE" node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
+      nohup flock -x "$DAEMON_LOCK_FILE" flock -x "$PORT_FILE" node "$DAEMON_BIN" < /dev/null >> "$LOG_FILE" 2>&1 200>&- &
     disown
 
     # Wait up to 5s for the daemon to write its port file.
