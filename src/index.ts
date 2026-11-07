@@ -508,7 +508,7 @@ async function dispatchRequest(
             tools: [
             {
               name: "petition_majesty",
-              description: "Petition Your Majesty with a question via Telegram and wait for the imperial reply (blocks you until Your Majesty replies)",
+              description: "Petition Your Majesty with a question and wait for the imperial reply (blocks you until Your Majesty replies)",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -522,7 +522,7 @@ async function dispatchRequest(
             },
             {
               name: "report_to_majesty",
-              description: "Report a message to Your Majesty via Telegram (you will not receive a reply)",
+              description: "Report a message to Your Majesty (you will not receive a reply from Your Majesty)",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -536,7 +536,7 @@ async function dispatchRequest(
             },
             {
               name: "send_file",
-              description: "Send a file to Your Majesty via Telegram",
+              description: "Send a file to Your Majesty",
               inputSchema: {
                 type: "object",
                 properties: {

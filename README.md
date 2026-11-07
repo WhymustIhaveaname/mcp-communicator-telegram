@@ -112,7 +112,7 @@ A session's slot is returned as soon as **any** of these happens: the user repli
 
 ### petition_majesty
 
-Petitions Your Majesty with a question via Telegram and waits for the imperial reply. If this session has reached its configured unanswered-question limit, the call fails immediately without sending another Telegram message.
+Petitions Your Majesty with a question and waits for the imperial reply. If this session has reached its configured unanswered-question limit, the call fails immediately without sending another Telegram message.
 
 **Important:** Only Telegram messages sent as a **Reply** to the bot's question message will resolve the pending `petition_majesty` call. Plain (non-reply) messages sent to the bot are logged and ignored. This prevents accidental responses from being mistaken for answers.
 
@@ -143,7 +143,7 @@ const response = await use_mcp_tool({
 
 ### report_to_majesty
 
-Reports a message to Your Majesty via Telegram (no response required).
+Reports a message to Your Majesty (you will not receive a reply from Your Majesty).
 
 Input Schema:
 ```json
