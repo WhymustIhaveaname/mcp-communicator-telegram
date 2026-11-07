@@ -29,8 +29,8 @@ test('blocks a second unanswered ask in the same session', () => {
   assert.throws(
     () => budget.reserve('session-a'),
     {
-      message: 'ask_user blocked for this session: 1 unanswered request(s), ' +
-        'limit=1. Wait for the previous ask_user reply before asking another question.',
+      message: 'petition_majesty blocked for this session: 1 unanswered request(s), ' +
+        'limit=1. Wait for the previous petition_majesty reply before asking another question.',
     },
   );
 
@@ -66,7 +66,7 @@ test('release is idempotent and makes the slot reusable', () => {
   releaseAgain();
 });
 
-test('ask_user backstop timeout defaults on and can be disabled', () => {
+test('petition_majesty backstop timeout defaults on and can be disabled', () => {
   assert.equal(parseAskTimeoutMs(undefined), DEFAULT_ASK_USER_TIMEOUT_MS);
   assert.equal(parseAskTimeoutMs(''), DEFAULT_ASK_USER_TIMEOUT_MS);
   assert.equal(parseAskTimeoutMs('0'), 0);

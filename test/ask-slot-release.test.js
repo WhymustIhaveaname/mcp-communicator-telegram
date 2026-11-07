@@ -1,8 +1,8 @@
-// Regression: a pending ask_user must give its per-session budget slot back
+// Regression: a pending petition_majesty must give its per-session budget slot back
 // when the call ends WITHOUT a Telegram reply. Observed failure before this
-// test existed: Claude Code aborted an ask_user client-side after ~12h; the
+// test existed: Claude Code aborted an petition_majesty client-side after ~12h; the
 // daemon kept awaiting the never-resolved reply promise, so askUser's
-// `finally` never ran and the session could never call ask_user again for the
+// `finally` never ran and the session could never call petition_majesty again for the
 // daemon's remaining lifetime (6+ days).
 //
 // The daemon needs a live Telegram bot, so instead of booting it we model the
@@ -71,7 +71,7 @@ test('client disconnect releases the slot (the 12h-timeout bug)', async () => {
   const ask = askUserLike(budget, 'session-a', { signal: controller.signal });
 
   assert.equal(budget.pending('session-a'), 1);
-  assert.throws(() => budget.reserve('session-a'), /ask_user blocked/);
+  assert.throws(() => budget.reserve('session-a'), /petition_majesty blocked/);
 
   controller.abort(new AskAbortedError('client_gone', 'MCP client closed the connection'));
   await assert.rejects(ask.promise, { name: 'AskAbortedError', kind: 'client_gone' });

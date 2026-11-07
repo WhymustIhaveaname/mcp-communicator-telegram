@@ -2,8 +2,8 @@
 // previous one's `.finally()` and sets no socket timeout, so a poll whose TCP
 // connection dies without RST leaves a promise that never settles — the loop
 // stops for good, with no `polling_error` and no other symptom. Outbound calls
-// keep working (each dials a fresh connection), so notify_user looked healthy
-// for hours on 2026-08-17 while every ask_user reply was dropped on the floor.
+// keep working (each dials a fresh connection), so report_to_majesty looked healthy
+// for hours on 2026-08-17 while every petition_majesty reply was dropped on the floor.
 //
 // The watchdog stamps settled polls and cancels the in-flight request once
 // those stamps stop arriving. These tests drive `check()` directly against a

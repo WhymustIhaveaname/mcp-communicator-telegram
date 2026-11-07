@@ -104,17 +104,17 @@ Add the server to your `.mcp.json` (or equivalent MCP settings file), pointing t
 
 Replace `/path/to/mcp-communicator-telegram` with the absolute path to your checkout.
 
-The wrapper reads configuration from the `.env` file in the project root, so no additional `env` block is needed in most setups. `MAX_PENDING_ASK_USER_PER_SESSION` limits unanswered `ask_user` calls separately for each session. It defaults to unlimited; set it to `1` to require a reply before that session can ask again. Sessions started with an older wrapper remain unlimited until they reconnect and receive a session identity.
+The wrapper reads configuration from the `.env` file in the project root, so no additional `env` block is needed in most setups. `MAX_PENDING_ASK_USER_PER_SESSION` limits unanswered `petition_majesty` calls separately for each session. It defaults to unlimited; set it to `1` to require a reply before that session can ask again. Sessions started with an older wrapper remain unlimited until they reconnect and receive a session identity.
 
-A session's slot is returned as soon as **any** of these happens: the user replies, the MCP client disconnects, the client sends `notifications/cancelled`, or the backstop `ASK_USER_TIMEOUT_MS` expires (default 24h; `off`/`none`/`0` disables). The last three exist because a client-side abort is invisible to the daemon by default — an MCP client that gives up on a blocked `ask_user` after its own timeout used to leave the slot reserved for the daemon's entire lifetime, permanently blocking that session from asking again.
+A session's slot is returned as soon as **any** of these happens: the user replies, the MCP client disconnects, the client sends `notifications/cancelled`, or the backstop `ASK_USER_TIMEOUT_MS` expires (default 24h; `off`/`none`/`0` disables). The last three exist because a client-side abort is invisible to the daemon by default — an MCP client that gives up on a blocked `petition_majesty` after its own timeout used to leave the slot reserved for the daemon's entire lifetime, permanently blocking that session from asking again.
 
 ## Available Tools
 
-### ask_user
+### petition_majesty
 
-Asks a question to the user via Telegram and waits for their response. If this session has reached its configured unanswered-question limit, the call fails immediately without sending another Telegram message.
+Petitions Your Majesty with a question via Telegram and waits for the imperial reply. If this session has reached its configured unanswered-question limit, the call fails immediately without sending another Telegram message.
 
-**Important:** Only Telegram messages sent as a **Reply** to the bot's question message will resolve the pending `ask_user` call. Plain (non-reply) messages sent to the bot are logged and ignored. This prevents accidental responses from being mistaken for answers.
+**Important:** Only Telegram messages sent as a **Reply** to the bot's question message will resolve the pending `petition_majesty` call. Plain (non-reply) messages sent to the bot are logged and ignored. This prevents accidental responses from being mistaken for answers.
 
 Input Schema:
 ```json
@@ -123,7 +123,7 @@ Input Schema:
   "properties": {
     "question": {
       "type": "string",
-      "description": "The question to ask the user"
+      "description": "The question to petition Your Majesty with"
     }
   },
   "required": ["question"]
@@ -134,16 +134,16 @@ Example usage:
 ```typescript
 const response = await use_mcp_tool({
   server_name: "mcp-communicator-telegram",
-  tool_name: "ask_user",
+  tool_name: "petition_majesty",
   arguments: {
     question: "What is your favorite color?"
   }
 });
 ```
 
-### notify_user
+### report_to_majesty
 
-Sends a notification message to the user via Telegram (no response required).
+Reports a message to Your Majesty via Telegram (no response required).
 
 Input Schema:
 ```json
@@ -152,7 +152,7 @@ Input Schema:
   "properties": {
     "message": {
       "type": "string",
-      "description": "The message to send to the user"
+      "description": "The message to report to Your Majesty"
     }
   },
   "required": ["message"]
@@ -163,7 +163,7 @@ Example usage:
 ```typescript
 await use_mcp_tool({
   server_name: "mcp-communicator-telegram",
-  tool_name: "notify_user",
+  tool_name: "report_to_majesty",
   arguments: {
     message: "Task completed successfully!"
   }

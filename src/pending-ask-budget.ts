@@ -20,7 +20,7 @@ export function parsePendingAskLimit(raw: string | undefined): number {
 export const DEFAULT_ASK_USER_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Backstop TTL for one pending ask_user, in milliseconds. `0`/`off`/`none`
+ * Backstop TTL for one pending petition_majesty, in milliseconds. `0`/`off`/`none`
  * disables it; omitting it takes DEFAULT_ASK_USER_TIMEOUT_MS.
  */
 export function parseAskTimeoutMs(raw: string | undefined): number {
@@ -48,7 +48,7 @@ export class PendingAskBudget {
 
   constructor(readonly limit: number) {
     if (limit !== UNLIMITED_PENDING_ASKS && (!Number.isSafeInteger(limit) || limit < 0)) {
-      throw new Error('pending ask_user limit must be a nonnegative integer or infinity');
+      throw new Error('pending petition_majesty limit must be a nonnegative integer or infinity');
     }
   }
 
@@ -62,8 +62,8 @@ export class PendingAskBudget {
     const current = this.counts.get(sessionId) ?? 0;
     if (current >= this.limit) {
       throw new Error(
-        `ask_user blocked for this session: ${current} unanswered ` +
-        `request(s), limit=${this.limit}. Wait for the previous ask_user reply ` +
+        `petition_majesty blocked for this session: ${current} unanswered ` +
+        `request(s), limit=${this.limit}. Wait for the previous petition_majesty reply ` +
         'before asking another question.',
       );
     }

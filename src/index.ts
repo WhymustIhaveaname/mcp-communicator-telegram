@@ -213,13 +213,13 @@ async function notifyUser(params: NotifyUserParams): Promise<void> {
   }
 }
 
-// A pending ask_user is only ever settled by a Telegram reply. Everything
+// A pending petition_majesty is only ever settled by a Telegram reply. Everything
 // else that can end the call — the MCP client hanging up, an explicit
 // notifications/cancelled, or the server-side TTL — has to be able to reject
 // the wait, because the budget slot is released in askUser's `finally`. If we
 // keep awaiting a promise nobody will resolve, the slot leaks for the lifetime
 // of the daemon (observed: a client-side timeout at 12h left a session
-// permanently unable to call ask_user again).
+// permanently unable to call petition_majesty again).
 class AskAbortedError extends Error {
   constructor(readonly kind: 'client_gone' | 'cancelled' | 'timeout', message: string) {
     super(message);
@@ -285,9 +285,9 @@ async function askUser(
   } catch (error: unknown) {
     if (error instanceof AskAbortedError) {
       // Abandoned, not failed: say so plainly in the log so a leaked slot is
-      // never the silent explanation for a later "ask_user blocked".
+      // never the silent explanation for a later "petition_majesty blocked".
       console.error(
-        `ask_user ${questionId} abandoned (${error.kind}): ${error.message}; ` +
+        `petition_majesty ${questionId} abandoned (${error.kind}): ${error.message}; ` +
         'releasing the session budget slot',
       );
       throw error;
@@ -311,7 +311,7 @@ function abortReason(signal: AbortSignal): AskAbortedError {
 
 // Acknowledge that the user's reply made it back to Claude Code by reacting
 // to *their* message with 👌. The contract callers rely on: if you see the
-// 👌 in Telegram, the ask_user tool call has unblocked on the CC side. So
+// 👌 in Telegram, the petition_majesty tool call has unblocked on the CC side. So
 // this MUST run only after the JSON-RPC response is flushed to the wrapper.
 async function reactWithOk(chatId: number, messageId: number): Promise<void> {
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/setMessageReaction`;
@@ -440,7 +440,7 @@ type DispatchResult = {
 };
 
 // In-flight cancellable requests, keyed by the JSON-RPC id the client used.
-// Only ask_user needs this today; it is the one handler that can block for
+// Only petition_majesty needs this today; it is the one handler that can block for
 // hours waiting on a human.
 const inFlightAborts = new Map<string, AbortController>();
 
@@ -461,7 +461,7 @@ async function dispatchRequest(
   // JSON-RPC notifications have no `id` field and MUST NOT receive a response.
   if (!('id' in request)) {
     // ...but a cancellation still has to reach the handler it cancels,
-    // otherwise the blocked ask_user keeps its budget slot forever.
+    // otherwise the blocked petition_majesty keeps its budget slot forever.
     if (request?.method === 'notifications/cancelled') {
       const requestId = request?.params?.requestId;
       const reason = typeof request?.params?.reason === 'string'
@@ -507,28 +507,28 @@ async function dispatchRequest(
           result: {
             tools: [
             {
-              name: "ask_user",
-              description: "Ask the user a question via Telegram and wait for their response (blocks you until the user replies)",
+              name: "petition_majesty",
+              description: "Petition Your Majesty with a question via Telegram and wait for the imperial reply (blocks you until Your Majesty replies)",
               inputSchema: {
                 type: "object",
                 properties: {
                   question: {
                     type: "string",
-                    description: "The question to ask the user"
+                    description: "The question to petition Your Majesty with"
                   }
                 },
                 required: ["question"]
               }
             },
             {
-              name: "notify_user",
-              description: "Send a notification message to the user via Telegram (you will not receive a reply)",
+              name: "report_to_majesty",
+              description: "Report a message to Your Majesty via Telegram (you will not receive a reply)",
               inputSchema: {
                 type: "object",
                 properties: {
                   message: {
                     type: "string",
-                    description: "The message to send to the user"
+                    description: "The message to report to Your Majesty"
                   }
                 },
                 required: ["message"]
@@ -536,7 +536,7 @@ async function dispatchRequest(
             },
             {
               name: "send_file",
-              description: "Send a file to the user via Telegram",
+              description: "Send a file to Your Majesty via Telegram",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -550,7 +550,7 @@ async function dispatchRequest(
             },
             {
               name: "zip_project",
-              description: "Zip a project directory and send it to the user",
+              description: "Zip a project directory and send it to Your Majesty",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -572,7 +572,7 @@ async function dispatchRequest(
         let result: any;
         let postCommit: (() => Promise<void>) | undefined;
         switch (request.params.name) {
-          case 'ask_user': {
+          case 'petition_majesty': {
             const reply = await askUser(request.params.arguments, sessionId, signal);
             result = { content: [{ type: "text", text: reply.text }] };
             // Schedule the 👌 reaction for AFTER the response is flushed —
@@ -586,9 +586,9 @@ async function dispatchRequest(
             };
             break;
           }
-          case 'notify_user': {
+          case 'report_to_majesty': {
             await notifyUser(request.params.arguments);
-            result = { content: [{ type: "text", text: "Notification sent successfully. This is a one-way channel — you will NOT receive a user reply through this tool. If you need a response, use ask_user instead." }] };
+            result = { content: [{ type: "text", text: "Notification sent successfully. This is a one-way channel — you will NOT receive a reply from Your Majesty through this tool. If you need a response, use petition_majesty instead." }] };
             break;
           }
           case 'send_file': {
@@ -692,7 +692,7 @@ async function startHttpServer(): Promise<{ server: http.Server; port: number }>
         // handler is still blocked, nothing will ever answer it. Turn that
         // into an abort so the handler's `finally` runs and releases whatever
         // it reserved. Without this a client-side timeout permanently burns
-        // the session's ask_user budget.
+        // the session's petition_majesty budget.
         const controller = new AbortController();
         const requestKey = 'id' in request ? String(request.id) : null;
         if (requestKey !== null) inFlightAborts.set(requestKey, controller);
@@ -849,13 +849,13 @@ async function main() {
   }
   const { port } = await startHttpServer();
   console.error(
-    'Maximum unanswered ask_user requests per session:',
+    'Maximum unanswered petition_majesty requests per session:',
     MAX_PENDING_ASK_USER_PER_SESSION === Number.POSITIVE_INFINITY
       ? 'unlimited'
       : MAX_PENDING_ASK_USER_PER_SESSION,
   );
   console.error(
-    'ask_user backstop timeout:',
+    'petition_majesty backstop timeout:',
     ASK_USER_TIMEOUT_MS > 0 ? `${ASK_USER_TIMEOUT_MS} ms` : 'disabled',
   );
 

@@ -4,7 +4,7 @@
 # Lazily spawns the daemon if it is not running. Concurrent wrappers are
 # serialized through flock during the detect-and-spawn critical section
 # ONLY — the lock is released before the proxy loop starts so long-running
-# ask_user calls do not block a second wrapper from connecting.
+# petition_majesty calls do not block a second wrapper from connecting.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -119,7 +119,7 @@ ensure_daemon() {
 
 # Handle one JSON-RPC request line: forward to the daemon over HTTP and
 # print the reply. Runs in its own backgrounded subshell (see main loop)
-# so a slow call (e.g. ask_user blocked on a human reply for hours) never
+# so a slow call (e.g. petition_majesty blocked on a human reply for hours) never
 # delays any other request queued behind it on the same stdin — each line
 # gets its own curl in flight concurrently.
 handle_request() {
@@ -154,8 +154,8 @@ handle_request() {
 # Re-resolve per request (ensure_daemon checks the flock on server.port,
 # which works cross-user) so the session survives the daemon dying and
 # being respawned on a new port. Each line is dispatched to a backgrounded
-# handle_request so unrelated requests (e.g. notify_user) never wait behind
-# a still-pending one (e.g. an unanswered ask_user) on this same connection.
+# handle_request so unrelated requests (e.g. report_to_majesty) never wait behind
+# a still-pending one (e.g. an unanswered petition_majesty) on this same connection.
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   handle_request "$line" &

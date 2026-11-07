@@ -5,9 +5,9 @@
 // settles, `.finally()` never runs, and the poll loop stops forever. Nothing
 // reports it: `polling_error` doesn't fire, and outbound calls keep working
 // because each one dials a fresh connection over the new route. The daemon
-// looks healthy and notify_user succeeds while every ask_user reply is
+// looks healthy and report_to_majesty succeeds while every petition_majesty reply is
 // silently dropped. (Observed 2026-08-17: a wedged poll socket sat at
-// Send-Q 245 B / 12 retransmits for hours, so every ask_user in every session
+// Send-Q 245 B / 12 retransmits for hours, so every petition_majesty in every session
 // hung until the daemon was killed by hand.)
 //
 // So: stamp every settled getUpdates, and if the gap ever exceeds a healthy
