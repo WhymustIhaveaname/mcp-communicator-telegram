@@ -172,7 +172,7 @@ await use_mcp_tool({
 
 ### send_file
 
-Sends a file to the user via Telegram.
+Sends a file to Your Majesty. Always sent as a document (no inline image preview).
 
 Input Schema:
 ```json
@@ -182,6 +182,10 @@ Input Schema:
     "filePath": {
       "type": "string",
       "description": "The path to the file to send"
+    },
+    "caption": {
+      "type": "string",
+      "description": "Optional caption shown under the file (max 1024 characters)"
     }
   },
   "required": ["filePath"]
@@ -194,7 +198,8 @@ await use_mcp_tool({
   server_name: "mcp-communicator-telegram",
   tool_name: "send_file",
   arguments: {
-    filePath: "path/to/file.txt"
+    filePath: "path/to/plot.png",
+    caption: "Held-out loss vs. learning rate, round 3"
   }
 });
 ```

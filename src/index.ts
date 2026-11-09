@@ -344,17 +344,18 @@ async function reactWithOk(chatId: number, messageId: number): Promise<void> {
   }
 }
 
-async function sendFile(params: { filePath: string }): Promise<void> {
+async function sendFile(params: { filePath: string; caption?: string }): Promise<void> {
   if (!bot) {
     throw new Error('Bot not initialized');
   }
 
-  const { filePath } = params;
+  const { filePath, caption } = params;
 
   try {
     await withChatMigrationRetry(chatId => {
       const fileStream = fs.createReadStream(filePath);
-      return bot!.sendDocument(chatId, fileStream, {}, {
+      // Telegram caps captions at 1024 characters; longer text is rejected by the API.
+      return bot!.sendDocument(chatId, fileStream, caption ? { caption } : {}, {
         contentType: 'application/octet-stream',
         filename: path.basename(filePath)
       });
@@ -543,6 +544,10 @@ async function dispatchRequest(
                   filePath: {
                     type: "string",
                     description: "The path to the file to send"
+                  },
+                  caption: {
+                    type: "string",
+                    description: "Optional caption shown under the file (max 1024 characters)"
                   }
                 },
                 required: ["filePath"]
